@@ -1,4 +1,6 @@
 import { APP_NAME } from "@/config/constants";
+import PasswordGeneratorCard from "@/components/PasswordGeneratorCard";
+import SecurityAuditCard from "@/components/SecurityAuditCard";
 
 export default function HomePage() {
   return (
@@ -15,11 +17,20 @@ export default function HomePage() {
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {/* Member 2 Mounting Slot: Password Generator & Security Audit */}
-          <section className="md:col-span-1 rounded-xl border border-slate-800 bg-slate-900/50 p-4">
-            <h2 className="font-semibold text-slate-200">Generator & Audit</h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Reserved for feature-member2 components
-            </p>
+          <section
+            aria-labelledby="generator-audit-heading"
+            className="md:col-span-1 min-w-0 space-y-4"
+          >
+            <h2
+              id="generator-audit-heading"
+              className="font-semibold text-slate-200"
+            >
+              Generator &amp; Audit
+            </h2>
+            <div className="space-y-6">
+              <PasswordGeneratorCard />
+              <SecurityAuditCard />
+            </div>
           </section>
 
           {/* Member 1 Mounting Slot: Encrypted Credential Form & Vault Table */}
