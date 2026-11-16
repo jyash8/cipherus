@@ -1,4 +1,5 @@
 import { APP_NAME } from "@/config/constants";
+import VaultWorkspace from "@/components/VaultWorkspace";
 
 export default function HomePage() {
   return (
@@ -23,11 +24,9 @@ export default function HomePage() {
           </section>
 
           {/* Member 1 Mounting Slot: Encrypted Credential Form & Vault Table */}
-          <section className="md:col-span-2 rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+          <section className="md:col-span-2 space-y-4">
             <h2 className="font-semibold text-slate-200">Encrypted Vault</h2>
-            <p className="text-xs text-slate-500 mt-1">
-              Reserved for feature-member1 components
-            </p>
+            <VaultWorkspace />
           </section>
         </div>
       </div>
