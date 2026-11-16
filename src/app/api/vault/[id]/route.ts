@@ -144,15 +144,16 @@ export async function PUT(request: Request, { params }: RouteContext) {
         { status: 400 },
       );
     }
-    // Re-encrypt with a fresh salt/IV and bump the update timestamp.
-    Object.assign(updates, encryptSecret(password, masterPassword), {
-      updatedAt: new Date(),
-    });
+    // Re-encrypt with a fresh salt/IV.
+    Object.assign(updates, encryptSecret(password, masterPassword));
   }
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "No updatable fields provided" }, { status: 400 });
   }
+
+  // Any successful update bumps the timestamp, whether or not the secret changed.
+  updates.updatedAt = new Date();
 
   try {
     const [updated] = await db
