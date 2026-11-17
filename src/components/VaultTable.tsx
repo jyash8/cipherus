@@ -177,12 +177,11 @@ export default function VaultTable({
     });
   }, [entries, search, category]);
 
-  function requireMasterPassword(): string | null {
+  function requireMasterPassword(what = "revealing or copying a password"): string | null {
     if (masterPassword.trim() === "") {
       setNotice({
         kind: "error",
-        message:
-          "Enter your master password above before revealing or copying a password.",
+        message: `Enter your master password above before ${what}.`,
       });
       return null;
     }
@@ -258,16 +257,25 @@ export default function VaultTable({
     );
     if (!confirmed) return;
 
+    const master = requireMasterPassword("deleting this credential");
+    if (master === null) return;
+
     setDeletingId(entry.id);
     setNotice(null);
     try {
-      const response = await fetch(`/api/vault/${entry.id}`, { method: "DELETE" });
+      const response = await fetch(`/api/vault/${entry.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ masterPassword: master }),
+      });
       if (!response.ok) {
         const data: unknown = await response.json().catch(() => null);
         setNotice({
           kind: "error",
           message:
-            extractServerError(data) ?? "Could not delete this credential.",
+            response.status === 401
+              ? "Incorrect master password — this entry could not be deleted."
+              : (extractServerError(data) ?? "Could not delete this credential."),
         });
         return;
       }

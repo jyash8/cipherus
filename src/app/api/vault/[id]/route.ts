@@ -144,6 +144,33 @@ export async function PUT(request: Request, { params }: RouteContext) {
         { status: 400 },
       );
     }
+
+    // Verify the existing master password before allowing a password change.
+    // Without this, anyone who can reach the API could overwrite a credential's
+    // ciphertext using an arbitrary master password.
+    try {
+      const [row] = await db
+        .select()
+        .from(credentials)
+        .where(eq(credentials.id, id))
+        .limit(1);
+
+      if (!row) {
+        return Response.json({ error: "Credential not found" }, { status: 404 });
+      }
+
+      try {
+        decryptSecret(row, masterPassword);
+      } catch {
+        return Response.json(
+          { error: "Invalid master password or corrupted vault entry" },
+          { status: 401 },
+        );
+      }
+    } catch {
+      return Response.json({ error: "Failed to update vault entry" }, { status: 500 });
+    }
+
     // Re-encrypt with a fresh salt/IV.
     Object.assign(updates, encryptSecret(password, masterPassword));
   }
@@ -172,14 +199,48 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(_request: Request, { params }: RouteContext) {
+export async function DELETE(request: Request, { params }: RouteContext) {
   const { id: rawId } = await params;
   const id = parseId(rawId);
   if (id === null) {
     return Response.json({ error: "Invalid credential id" }, { status: 400 });
   }
 
+  const body = await readJsonBody(request);
+  if (!body) {
+    return Response.json(
+      { error: "Request body must be a valid JSON object" },
+      { status: 400 },
+    );
+  }
+
+  const { masterPassword } = body;
+  if (!isNonEmptyString(masterPassword)) {
+    return Response.json({ error: "masterPassword is required" }, { status: 400 });
+  }
+
   try {
+    const [row] = await db
+      .select()
+      .from(credentials)
+      .where(eq(credentials.id, id))
+      .limit(1);
+
+    if (!row) {
+      return Response.json({ error: "Credential not found" }, { status: 404 });
+    }
+
+    // Verify the master password before allowing deletion, so someone who can
+    // reach the API cannot destroy vault data without knowing the passphrase.
+    try {
+      decryptSecret(row, masterPassword);
+    } catch {
+      return Response.json(
+        { error: "Invalid master password or corrupted vault entry" },
+        { status: 401 },
+      );
+    }
+
     const result = await db.delete(credentials).where(eq(credentials.id, id));
 
     if (result.changes === 0) {

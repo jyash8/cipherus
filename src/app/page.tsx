@@ -9,7 +9,7 @@ export default function HomePage() {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{APP_NAME}</h1>
             <p className="text-sm text-slate-400">
-              Zero-Knowledge Local Password Manager (Next.js + Drizzle + SQLite)
+              Local encrypted credential vault (Next.js + Drizzle + SQLite)
             </p>
           </div>
         </header>
