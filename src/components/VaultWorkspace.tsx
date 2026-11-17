@@ -1,54 +1,260 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  Briefcase,
+  Code,
+  Eye,
+  EyeOff,
+  Folder,
+  Landmark,
+  Lock,
+  Users,
+} from "lucide-react";
+import { CATEGORIES } from "@/config/constants";
 import CredentialForm, { type EditableCredential } from "./CredentialForm";
-import VaultTable from "./VaultTable";
+import Modal from "./Modal";
+import VaultTable, { type VaultEntry } from "./VaultTable";
 
-/**
- * Shared state hub for the vault features:
- * - the session master password (React state only, never persisted)
- * - the refresh trigger used to re-fetch the credential list
- * - the credential currently being edited, shared by the form and the table
- */
-export default function VaultWorkspace() {
-  const [masterPassword, setMasterPassword] = useState("");
-  const [refreshToken, setRefreshToken] = useState(0);
-  const [editingCredential, setEditingCredential] =
-    useState<EditableCredential | null>(null);
+export interface VaultWorkspaceProps {
+  masterPassword: string;
+  onMasterPasswordChange: (value: string) => void;
+  refreshToken: number;
+  onChanged: () => void;
+  search: string;
+  drawerOpen: boolean;
+  onDrawerClose: () => void;
+  onNotify: (message: string) => void;
+}
 
-  const refresh = useCallback(() => {
-    setRefreshToken((token) => token + 1);
-  }, []);
+const CATEGORY_ICONS: Record<string, typeof Folder> = {
+  Work: Briefcase,
+  Finance: Landmark,
+  Social: Users,
+  Development: Code,
+};
 
-  const handleSaved = useCallback(() => {
-    setEditingCredential(null);
-    refresh();
-  }, [refresh]);
+function CategoryIcon({ category }: { category: string }) {
+  const Icon = CATEGORY_ICONS[category] ?? Folder;
+  return <Icon width={18} height={18} aria-hidden="true" />;
+}
 
-  const handleCancelEdit = useCallback(() => {
-    setEditingCredential(null);
-  }, []);
+export default function VaultWorkspace({
+  masterPassword,
+  onMasterPasswordChange,
+  refreshToken,
+  onChanged,
+  search,
+  drawerOpen,
+  onDrawerClose,
+  onNotify,
+}: VaultWorkspaceProps) {
+  const [entries, setEntries] = useState<VaultEntry[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [category, setCategory] = useState("All");
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<EditableCredential | null>(null);
+  const [showMaster, setShowMaster] = useState(false);
+  const masterInputRef = useRef<HTMLInputElement>(null);
 
-  const handleEdit = useCallback((entry: EditableCredential) => {
-    setEditingCredential(entry);
-  }, []);
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const response = await fetch("/api/vault", { cache: "no-store" });
+        if (!response.ok) throw new Error("Failed to load vault");
+        const data: unknown = await response.json();
+        if (cancelled) return;
+        setEntries(Array.isArray(data) ? (data as VaultEntry[]) : []);
+        setLoadError(null);
+      } catch {
+        if (cancelled) return;
+        setEntries([]);
+        setLoadError("Could not load the vault. Please try refreshing.");
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshToken]);
+
+  const categories = useMemo(() => {
+    const names = new Set<string>(CATEGORIES);
+    (entries ?? []).forEach((entry) => names.add(entry.category));
+    return Array.from(names);
+  }, [entries]);
+
+  const counts = useMemo(() => {
+    const result: Record<string, number> = { All: entries?.length ?? 0 };
+    (entries ?? []).forEach((entry) => {
+      result[entry.category] = (result[entry.category] ?? 0) + 1;
+    });
+    return result;
+  }, [entries]);
+
+  function openCreate() {
+    setEditing(null);
+    setFormOpen(true);
+  }
+
+  function openEdit(entry: EditableCredential) {
+    setEditing(entry);
+    setFormOpen(true);
+  }
+
+  function closeForm() {
+    setFormOpen(false);
+    setEditing(null);
+  }
+
+  function handleSaved() {
+    const wasEditing = editing !== null;
+    closeForm();
+    onChanged();
+    onNotify(wasEditing ? "Credential updated." : "Credential saved to the vault.");
+  }
+
+  function selectCategory(next: string) {
+    setCategory(next);
+    setSelectedId(null);
+    onDrawerClose();
+  }
+
+  function focusMasterPassword() {
+    masterInputRef.current?.focus();
+    masterInputRef.current?.select();
+  }
 
   return (
-    <div className="space-y-6">
-      <CredentialForm
-        masterPassword={masterPassword}
-        onMasterPasswordChange={setMasterPassword}
-        editingCredential={editingCredential}
-        onCancelEdit={handleCancelEdit}
-        onSaved={handleSaved}
+    <>
+      <aside
+        id="vault-drawer"
+        className={`m-drawer${drawerOpen ? " open" : ""}`}
+        aria-label="Categories"
+      >
+        <div className="drawer-section-title">Categories</div>
+
+        <button
+          type="button"
+          className={`m-nav-item${category === "All" ? " selected" : ""}`}
+          onClick={() => selectCategory("All")}
+          aria-current={category === "All" ? "page" : undefined}
+        >
+          <span className="icon">
+            <Folder width={18} height={18} aria-hidden="true" />
+          </span>
+          <span>All categories</span>
+          <span className="count">{counts.All ?? 0}</span>
+        </button>
+
+        {categories.map((name) => (
+          <button
+            key={name}
+            type="button"
+            className={`m-nav-item indent-1${category === name ? " selected" : ""}`}
+            onClick={() => selectCategory(name)}
+            aria-current={category === name ? "page" : undefined}
+          >
+            <span className="icon">
+              <CategoryIcon category={name} />
+            </span>
+            <span>{name}</span>
+            {counts[name] ? <span className="count">{counts[name]}</span> : null}
+          </button>
+        ))}
+      </aside>
+
+      <div
+        className={`drawer-scrim${drawerOpen ? " open" : ""}`}
+        onClick={onDrawerClose}
+        aria-hidden="true"
       />
 
-      <VaultTable
-        masterPassword={masterPassword}
-        refreshToken={refreshToken}
-        onEdit={handleEdit}
-        onChanged={refresh}
-      />
-    </div>
+      <main className="content vault-content" id="main-content">
+        <div className="vault-top">
+          <div className="content-toolbar" style={{ paddingBottom: 0 }}>
+            <div className="session-bar">
+              <span className="session-label">
+                <Lock width={14} height={14} aria-hidden="true" />
+                Session password
+              </span>
+              <div className="session-input">
+                <input
+                  ref={masterInputRef}
+                  id="vault-master-password"
+                  type={showMaster ? "text" : "password"}
+                  value={masterPassword}
+                  onChange={(event) =>
+                    onMasterPasswordChange(event.target.value)
+                  }
+                  placeholder="Enter your master password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  aria-label="Session master password"
+                />
+                <button
+                  type="button"
+                  className="m-iconbtn reveal"
+                  onClick={() => setShowMaster((visible) => !visible)}
+                  aria-label={
+                    showMaster ? "Hide master password" : "Show master password"
+                  }
+                  aria-pressed={showMaster}
+                >
+                  {showMaster ? (
+                    <EyeOff width={16} height={16} aria-hidden="true" />
+                  ) : (
+                    <Eye width={16} height={16} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {masterPassword !== "" && (
+                <button
+                  type="button"
+                  className="m-btn text small"
+                  onClick={() => onMasterPasswordChange("")}
+                >
+                  Clear
+                </button>
+              )}
+              <span className="session-hint">Held in memory</span>
+            </div>
+          </div>
+        </div>
+
+        <VaultTable
+          entries={entries}
+          loadError={loadError}
+          masterPassword={masterPassword}
+          category={category}
+          search={search}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onAdd={openCreate}
+          onEdit={openEdit}
+          onChanged={onChanged}
+          onNotify={onNotify}
+          onRequestMasterPassword={focusMasterPassword}
+        />
+      </main>
+
+      <Modal
+        open={formOpen}
+        title={editing ? "Edit entry" : "New entry"}
+        onClose={closeForm}
+        initialFocusSelector="#site-name"
+      >
+        <CredentialForm
+          masterPassword={masterPassword}
+          onMasterPasswordChange={onMasterPasswordChange}
+          editingCredential={editing}
+          onCancelEdit={closeForm}
+          onSaved={handleSaved}
+        />
+      </Modal>
+    </>
   );
 }

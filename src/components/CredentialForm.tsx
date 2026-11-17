@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Eye, EyeOff, KeyRound, Lock, Plus } from "lucide-react";
+import { Eye, EyeOff, KeyRound, Lock } from "lucide-react";
+import { CATEGORIES } from "@/config/constants";
 
 export interface EditableCredential {
   id: number;
@@ -18,11 +19,6 @@ export interface CredentialFormProps {
   onCancelEdit: () => void;
   onSaved: () => void;
 }
-
-const CATEGORIES = ["General", "Work", "Finance", "Social", "Development"] as const;
-
-const inputClass =
-  "w-full rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500";
 
 interface FieldErrors {
   siteName?: string;
@@ -149,12 +145,6 @@ function CredentialFormFields({
 
       setPassword("");
       setShowPassword(false);
-      if (!isEditing) {
-        setSiteName("");
-        setSiteUrl("");
-        setUsername("");
-        setCategory("General");
-      }
       onSaved();
     } catch {
       setServerError("Network error — could not reach the vault API.");
@@ -170,256 +160,195 @@ function CredentialFormFields({
     : [...CATEGORIES, category];
 
   return (
-    <div className="space-y-5 rounded-xl border border-slate-800 bg-slate-900/50 p-4 md:p-5">
-      {/* Session master password bar */}
-      <section
-        aria-labelledby="master-password-label"
-        className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
-      >
-        <div className="flex items-center gap-2">
-          <KeyRound className="size-4 text-sky-400" aria-hidden="true" />
-          <h3
-            id="master-password-label"
-            className="text-xs font-semibold uppercase tracking-wide text-slate-400"
-          >
-            Session Master Password
-          </h3>
-        </div>
-
-        <div className="relative mt-2">
-          <Lock
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500"
-            aria-hidden="true"
-          />
+    <form noValidate onSubmit={handleSubmit} className="form-stack">
+      <div className="form-grid">
+        <div className="m-textfield">
+          <label htmlFor="site-name">Site name</label>
           <input
-            id="master-password"
-            type={showMasterPassword ? "text" : "password"}
-            value={masterPassword}
-            onChange={(event) => onMasterPasswordChange(event.target.value)}
-            placeholder="Enter your vault passphrase"
+            id="site-name"
+            value={siteName}
+            onChange={(event) => setSiteName(event.target.value)}
+            placeholder="GitHub"
             autoComplete="off"
-            spellCheck={false}
-            aria-invalid={Boolean(errors.masterPassword)}
-            aria-describedby={
-              errors.masterPassword ? "master-password-error" : undefined
-            }
-            className={`${inputClass} pl-9 pr-10`}
+            aria-invalid={Boolean(errors.siteName)}
+            aria-describedby={errors.siteName ? "site-name-error" : undefined}
           />
-          <button
-            type="button"
-            onClick={() => setShowMasterPassword((visible) => !visible)}
-            aria-label={
-              showMasterPassword ? "Hide master password" : "Show master password"
-            }
-            aria-pressed={showMasterPassword}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-slate-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
-          >
-            {showMasterPassword ? (
-              <EyeOff className="size-4" aria-hidden="true" />
-            ) : (
-              <Eye className="size-4" aria-hidden="true" />
-            )}
-          </button>
-        </div>
-
-        <p className="mt-2 text-xs text-slate-500">
-          Held in memory for this tab only — never stored in the browser.
-        </p>
-        {errors.masterPassword && (
-          <p id="master-password-error" className="mt-1 text-xs text-rose-400">
-            {errors.masterPassword}
-          </p>
-        )}
-      </section>
-
-      {/* Add / edit credential form */}
-      <form noValidate onSubmit={handleSubmit} className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="flex items-center gap-2 font-semibold text-slate-200">
-            <Lock className="size-4 text-sky-400" aria-hidden="true" />
-            {isEditing ? "Edit Credential" : "Add Credential"}
-          </h2>
-          {isEditing && (
-            <button
-              type="button"
-              onClick={onCancelEdit}
-              className="rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
-            >
-              Cancel
-            </button>
+          {errors.siteName && (
+            <p id="site-name-error" className="field-error">
+              {errors.siteName}
+            </p>
           )}
         </div>
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <div>
-            <label
-              htmlFor="site-name"
-              className="mb-1 block text-xs font-medium text-slate-400"
-            >
-              Site Name
-            </label>
-            <input
-              id="site-name"
-              value={siteName}
-              onChange={(event) => setSiteName(event.target.value)}
-              placeholder="GitHub"
-              autoComplete="off"
-              aria-invalid={Boolean(errors.siteName)}
-              aria-describedby={errors.siteName ? "site-name-error" : undefined}
-              className={inputClass}
-            />
-            {errors.siteName && (
-              <p id="site-name-error" className="mt-1 text-xs text-rose-400">
-                {errors.siteName}
-              </p>
+        <div className="m-textfield">
+          <label htmlFor="site-url">Site URL</label>
+          <input
+            id="site-url"
+            value={siteUrl}
+            onChange={(event) => setSiteUrl(event.target.value)}
+            placeholder="https://github.com"
+            inputMode="url"
+            autoComplete="off"
+          />
+        </div>
+
+        <div className="m-textfield">
+          <label htmlFor="username">Username / email</label>
+          <input
+            id="username"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            placeholder="you@example.com"
+            autoComplete="off"
+            aria-invalid={Boolean(errors.username)}
+            aria-describedby={errors.username ? "username-error" : undefined}
+          />
+          {errors.username && (
+            <p id="username-error" className="field-error">
+              {errors.username}
+            </p>
+          )}
+        </div>
+
+        <div className="m-textfield">
+          <label htmlFor="category">Category</label>
+          <select
+            id="category"
+            value={category}
+            onChange={(event) => setCategory(event.target.value)}
+          >
+            {categoryOptions.map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="m-textfield full">
+          <label htmlFor="credential-password">
+            Password
+            {isEditing && (
+              <span className="muted" style={{ marginLeft: 8 }}>
+                (leave blank to keep the current password)
+              </span>
             )}
-          </div>
-
-          <div>
-            <label
-              htmlFor="site-url"
-              className="mb-1 block text-xs font-medium text-slate-400"
-            >
-              Site URL
-            </label>
+          </label>
+          <div className="with-icon">
             <input
-              id="site-url"
-              value={siteUrl}
-              onChange={(event) => setSiteUrl(event.target.value)}
-              placeholder="https://github.com"
-              inputMode="url"
-              autoComplete="off"
-              className={inputClass}
+              id="credential-password"
+              type={showPassword ? "text" : "password"}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder={
+                isEditing ? "New password (optional)" : "Enter a password"
+              }
+              autoComplete="new-password"
+              spellCheck={false}
+              aria-invalid={Boolean(errors.password)}
+              aria-describedby={
+                errors.password ? "credential-password-error" : undefined
+              }
             />
-          </div>
-
-          <div>
-            <label
-              htmlFor="username"
-              className="mb-1 block text-xs font-medium text-slate-400"
+            <button
+              type="button"
+              className="m-iconbtn reveal"
+              onClick={() => setShowPassword((visible) => !visible)}
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-pressed={showPassword}
             >
-              Username / Email
-            </label>
-            <input
-              id="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              placeholder="you@example.com"
-              autoComplete="off"
-              aria-invalid={Boolean(errors.username)}
-              aria-describedby={errors.username ? "username-error" : undefined}
-              className={inputClass}
-            />
-            {errors.username && (
-              <p id="username-error" className="mt-1 text-xs text-rose-400">
-                {errors.username}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <label
-              htmlFor="category"
-              className="mb-1 block text-xs font-medium text-slate-400"
-            >
-              Category
-            </label>
-            <select
-              id="category"
-              value={category}
-              onChange={(event) => setCategory(event.target.value)}
-              className={inputClass}
-            >
-              {categoryOptions.map((option) => (
-                <option key={option} value={option} className="bg-slate-900">
-                  {option}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="sm:col-span-2">
-            <label
-              htmlFor="credential-password"
-              className="mb-1 block text-xs font-medium text-slate-400"
-            >
-              Password
-              {isEditing && (
-                <span className="ml-2 font-normal text-slate-500">
-                  (leave blank to keep the current password)
-                </span>
+              {showPassword ? (
+                <EyeOff width={16} height={16} aria-hidden="true" />
+              ) : (
+                <Eye width={16} height={16} aria-hidden="true" />
               )}
-            </label>
-            <div className="relative">
-              <Lock
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500"
-                aria-hidden="true"
-              />
-              <input
-                id="credential-password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder={
-                  isEditing ? "New password (optional)" : "Enter a password"
-                }
-                autoComplete="new-password"
-                spellCheck={false}
-                aria-invalid={Boolean(errors.password)}
-                aria-describedby={
-                  errors.password ? "credential-password-error" : undefined
-                }
-                className={`${inputClass} pl-9 pr-10`}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((visible) => !visible)}
-                aria-label={showPassword ? "Hide password" : "Show password"}
-                aria-pressed={showPassword}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-slate-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
-              >
-                {showPassword ? (
-                  <EyeOff className="size-4" aria-hidden="true" />
-                ) : (
-                  <Eye className="size-4" aria-hidden="true" />
-                )}
-              </button>
-            </div>
-            {errors.password && (
-              <p
-                id="credential-password-error"
-                className="mt-1 text-xs text-rose-400"
-              >
-                {errors.password}
-              </p>
-            )}
+            </button>
           </div>
+          {errors.password && (
+            <p id="credential-password-error" className="field-error">
+              {errors.password}
+            </p>
+          )}
         </div>
 
-        {serverError && (
-          <p
-            role="alert"
-            className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
-          >
-            {serverError}
+        <div className="m-textfield full">
+          <label htmlFor="form-master-password">
+            <span
+              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
+            >
+              <KeyRound width={14} height={14} aria-hidden="true" />
+              Master password
+            </span>
+          </label>
+          <div className="with-icon">
+            <input
+              id="form-master-password"
+              type={showMasterPassword ? "text" : "password"}
+              value={masterPassword}
+              onChange={(event) =>
+                onMasterPasswordChange(event.target.value)
+              }
+              placeholder="Enter your vault passphrase"
+              autoComplete="off"
+              spellCheck={false}
+              aria-invalid={Boolean(errors.masterPassword)}
+              aria-describedby={
+                errors.masterPassword ? "form-master-password-error" : undefined
+              }
+            />
+            <button
+              type="button"
+              className="m-iconbtn reveal"
+              onClick={() => setShowMasterPassword((visible) => !visible)}
+              aria-label={
+                showMasterPassword
+                  ? "Hide master password"
+                  : "Show master password"
+              }
+              aria-pressed={showMasterPassword}
+            >
+              {showMasterPassword ? (
+                <EyeOff width={16} height={16} aria-hidden="true" />
+              ) : (
+                <Eye width={16} height={16} aria-hidden="true" />
+              )}
+            </button>
+          </div>
+          <p className="muted">
+            Held in memory for this tab only — never stored in the browser.
           </p>
-        )}
-
-        <div className="flex items-center justify-end gap-2">
-          <button
-            type="submit"
-            disabled={submitting}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-sky-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Plus className="size-4" aria-hidden="true" />
-            {submitting
-              ? "Saving…"
-              : isEditing
-                ? "Update Credential"
-                : "Save Credential"}
-          </button>
+          {errors.masterPassword && (
+            <p id="form-master-password-error" className="field-error">
+              {errors.masterPassword}
+            </p>
+          )}
         </div>
-      </form>
-    </div>
+      </div>
+
+      {serverError && (
+        <p role="alert" className="notice error">
+          {serverError}
+        </p>
+      )}
+
+      <div className="dialog-actions inline">
+        <button
+          type="button"
+          className="m-btn text"
+          onClick={onCancelEdit}
+          disabled={submitting}
+        >
+          Cancel
+        </button>
+        <button type="submit" className="m-btn contained" disabled={submitting}>
+          <Lock width={16} height={16} aria-hidden="true" />
+          {submitting
+            ? "Saving…"
+            : isEditing
+              ? "Update credential"
+              : "Save credential"}
+        </button>
+      </div>
+    </form>
   );
 }

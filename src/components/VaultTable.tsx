@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   Check,
   Copy,
   Eye,
   EyeOff,
   Pencil,
-  Search,
+  Plus,
   Trash2,
 } from "lucide-react";
 import type { EditableCredential } from "./CredentialForm";
@@ -18,25 +18,25 @@ export interface VaultEntry extends EditableCredential {
 }
 
 export interface VaultTableProps {
+  entries: VaultEntry[] | null;
+  loadError: string | null;
   masterPassword: string;
-  refreshToken: number;
+  category: string;
+  search: string;
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+  onAdd: () => void;
   onEdit: (entry: EditableCredential) => void;
   onChanged: () => void;
+  onNotify: (message: string) => void;
+  onRequestMasterPassword: () => void;
 }
 
 const MASKED_PASSWORD = "••••••••••••";
-const CATEGORIES = [
-  "General",
-  "Work",
-  "Finance",
-  "Social",
-  "Development",
-] as const;
-
-const buttonClass =
-  "inline-flex items-center gap-1 rounded-md border border-slate-700 px-2 py-1 text-xs text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50";
 
 type Notice = { kind: "error" | "success"; message: string } | null;
+
+type SortKey = "siteName" | "username" | "category" | "siteUrl";
 
 function extractServerError(data: unknown): string | null {
   if (
@@ -115,77 +115,80 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+function formatDate(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString();
+}
+
 export default function VaultTable({
+  entries,
+  loadError,
   masterPassword,
-  refreshToken,
+  category,
+  search,
+  selectedId,
+  onSelect,
+  onAdd,
   onEdit,
   onChanged,
+  onNotify,
+  onRequestMasterPassword,
 }: VaultTableProps) {
-  const [entries, setEntries] = useState<VaultEntry[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("All");
   const [revealed, setRevealed] = useState<Record<number, string>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("siteName");
+  const [sortAsc, setSortAsc] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    (async () => {
-      try {
-        const response = await fetch("/api/vault", { cache: "no-store" });
-        if (!response.ok) {
-          throw new Error("Failed to load vault");
-        }
-        const data: unknown = await response.json();
-        if (cancelled) return;
-        setEntries(Array.isArray(data) ? (data as VaultEntry[]) : []);
-        setLoadError(null);
-      } catch {
-        if (cancelled) return;
-        setEntries([]);
-        setLoadError("Could not load the vault. Please try refreshing.");
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshToken]);
-
-  const categoryOptions = useMemo(() => {
-    const options = new Set<string>(CATEGORIES);
-    (entries ?? []).forEach((entry) => options.add(entry.category));
-    return ["All", ...Array.from(options)];
-  }, [entries]);
+  const selected =
+    entries?.find((entry) => entry.id === selectedId) ?? null;
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return (entries ?? []).filter((entry) => {
+    const list = (entries ?? []).filter((entry) => {
       if (category !== "All" && entry.category !== category) {
         return false;
       }
-      if (query === "") {
-        return true;
-      }
-      return [entry.siteName, entry.username, entry.siteUrl ?? "", entry.category].some(
-        (value) => value.toLowerCase().includes(query),
-      );
+      if (query === "") return true;
+      return [
+        entry.siteName,
+        entry.username,
+        entry.siteUrl ?? "",
+        entry.category,
+      ].some((value) => value.toLowerCase().includes(query));
     });
-  }, [entries, search, category]);
 
-  function requireMasterPassword(what = "revealing or copying a password"): string | null {
-    if (masterPassword.trim() === "") {
-      setNotice({
-        kind: "error",
-        message: `Enter your master password above before ${what}.`,
-      });
-      return null;
+    return list.sort((a, b) => {
+      const left = (a[sortKey] ?? "").toLowerCase();
+      const right = (b[sortKey] ?? "").toLowerCase();
+      return sortAsc
+        ? left.localeCompare(right)
+        : right.localeCompare(left);
+    });
+  }, [entries, category, search, sortKey, sortAsc]);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortAsc((ascending) => !ascending);
+    } else {
+      setSortKey(key);
+      setSortAsc(true);
     }
-    return masterPassword;
+  }
+
+  function requireMasterPassword(what: string): string | null {
+    if (masterPassword.trim() !== "") {
+      return masterPassword;
+    }
+
+    setNotice({
+      kind: "error",
+      message: `Enter your master password in the session bar above before ${what}.`,
+    });
+    onRequestMasterPassword();
+    return null;
   }
 
   async function handleToggleReveal(entry: VaultEntry) {
@@ -198,7 +201,7 @@ export default function VaultTable({
       return;
     }
 
-    const master = requireMasterPassword();
+    const master = requireMasterPassword("revealing a password");
     if (master === null) return;
 
     setBusyId(entry.id);
@@ -217,7 +220,7 @@ export default function VaultTable({
     let password = revealed[entry.id];
 
     if (password === undefined) {
-      const master = requireMasterPassword();
+      const master = requireMasterPassword("copying a password");
       if (master === null) return;
 
       setBusyId(entry.id);
@@ -230,16 +233,16 @@ export default function VaultTable({
         return;
       }
       password = result.password;
-      setRevealed((previous) => ({ ...previous, [entry.id]: result.password }));
+      setRevealed((previous) => ({
+        ...previous,
+        [entry.id]: result.password,
+      }));
     }
 
     try {
       await copyText(password);
       setCopiedId(entry.id);
-      setNotice({
-        kind: "success",
-        message: `Password for "${entry.siteName}" copied to clipboard.`,
-      });
+      onNotify(`Password for "${entry.siteName}" copied to clipboard.`);
       window.setTimeout(() => {
         setCopiedId((current) => (current === entry.id ? null : current));
       }, 2000);
@@ -285,11 +288,9 @@ export default function VaultTable({
         delete next[entry.id];
         return next;
       });
-      setNotice({
-        kind: "success",
-        message: `"${entry.siteName}" deleted from the vault.`,
-      });
+      onSelect(null);
       onChanged();
+      onNotify(`"${entry.siteName}" deleted from the vault.`);
     } catch {
       setNotice({
         kind: "error",
@@ -300,193 +301,288 @@ export default function VaultTable({
     }
   }
 
+  const revealedPassword =
+    selected !== null && busyId !== selected.id
+      ? revealed[selected.id]
+      : undefined;
+
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-4 md:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="font-semibold text-slate-200">Stored Credentials</h2>
-        <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
-          {entries?.length ?? 0} saved
+    <>
+      <div className="content-toolbar">
+        <button type="button" className="m-btn contained" onClick={onAdd}>
+          <Plus width={18} height={18} aria-hidden="true" /> New entry
+        </button>
+        <button
+          type="button"
+          className="m-btn tonal"
+          disabled={selected === null}
+          onClick={() => selected !== null && onEdit(selected)}
+        >
+          <Pencil width={18} height={18} aria-hidden="true" /> Edit
+        </button>
+        <button
+          type="button"
+          className="m-btn tonal"
+          disabled={selected === null || deletingId !== null}
+          onClick={() => selected !== null && void handleDelete(selected)}
+        >
+          <Trash2 width={18} height={18} aria-hidden="true" /> Delete
+        </button>
+        <span className="status-chip">
+          {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
         </span>
-      </div>
-
-      <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500"
-            aria-hidden="true"
-          />
-          <input
-            id="vault-search"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search site, username, or URL"
-            aria-label="Search credentials"
-            className="w-full rounded-lg border border-slate-800 bg-slate-950/60 py-2 pl-9 pr-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          />
-        </div>
-
-        <div>
-          <label htmlFor="vault-category-filter" className="sr-only">
-            Filter by category
-          </label>
-          <select
-            id="vault-category-filter"
-            value={category}
-            onChange={(event) => setCategory(event.target.value)}
-            className="w-full rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-          >
-            {categoryOptions.map((option) => (
-              <option key={option} value={option} className="bg-slate-900">
-                {option === "All" ? "All categories" : option}
-              </option>
-            ))}
-          </select>
-        </div>
       </div>
 
       {(notice || loadError) && (
         <p
           role="alert"
-          className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
-            (notice?.kind ?? "error") === "success"
-              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-              : "border-rose-500/30 bg-rose-500/10 text-rose-300"
-          }`}
+          className={`notice ${(notice?.kind ?? "error") === "success" ? "success" : "error"}`}
+          style={{ margin: "4px 16px 0" }}
         >
           {notice?.message ?? loadError}
         </p>
       )}
 
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full min-w-[680px] border-collapse text-left text-sm">
-          <thead>
-            <tr className="text-xs uppercase tracking-wide text-slate-500">
-              <th className="px-2 py-2 font-medium">Site</th>
-              <th className="px-2 py-2 font-medium">Username</th>
-              <th className="px-2 py-2 font-medium">Category</th>
-              <th className="px-2 py-2 font-medium">Password</th>
-              <th className="px-2 py-2 text-right font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.map((entry) => {
-              const isRevealed = revealed[entry.id] !== undefined;
-              const isBusy = busyId === entry.id;
-
-              return (
+      <div className={`split${selected !== null ? " show-detail" : ""}`}>
+        <div className="entry-list">
+          <table>
+            <thead>
+              <tr>
+                <th
+                  aria-sort={
+                    sortKey === "siteName"
+                      ? sortAsc
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button
+                    type="button"
+                    className="sort-btn"
+                    onClick={() => toggleSort("siteName")}
+                  >
+                    Site
+                  </button>
+                </th>
+                <th
+                  aria-sort={
+                    sortKey === "username"
+                      ? sortAsc
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button
+                    type="button"
+                    className="sort-btn"
+                    onClick={() => toggleSort("username")}
+                  >
+                    Username
+                  </button>
+                </th>
+                <th>Password</th>
+                <th
+                  aria-sort={
+                    sortKey === "category"
+                      ? sortAsc
+                        ? "ascending"
+                        : "descending"
+                      : "none"
+                  }
+                >
+                  <button
+                    type="button"
+                    className="sort-btn"
+                    onClick={() => toggleSort("category")}
+                  >
+                    Category
+                  </button>
+                </th>
+                <th>URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((entry) => (
                 <tr
                   key={entry.id}
-                  className="border-t border-slate-800/70 align-middle transition-colors hover:bg-slate-800/20"
+                  className={entry.id === selectedId ? "selected" : ""}
+                  aria-selected={entry.id === selectedId}
+                  tabIndex={0}
+                  onClick={() => onSelect(entry.id)}
+                  onDoubleClick={() => onEdit(entry)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      onEdit(entry);
+                    } else if (event.key === " ") {
+                      event.preventDefault();
+                      onSelect(entry.id);
+                    }
+                  }}
                 >
-                  <td className="px-2 py-3">
-                    <div className="font-medium text-slate-200">{entry.siteName}</div>
-                    {entry.siteUrl && (
+                  <td className="title">
+                    <span className="entry-title">
+                      <span className="entry-icon" aria-hidden="true">
+                        <svg
+                          width="18"
+                          height="18"
+                          viewBox="0 0 24 24"
+                          fill="currentColor"
+                        >
+                          <path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm-3 8V6a3 3 0 0 1 6 0v3H9Z" />
+                        </svg>
+                      </span>
+                      {entry.siteName}
+                    </span>
+                  </td>
+                  <td>{entry.username}</td>
+                  <td>
+                    <span className="mono">{MASKED_PASSWORD}</span>
+                  </td>
+                  <td>{entry.category}</td>
+                  <td>
+                    {entry.siteUrl ? (
                       <a
                         href={entry.siteUrl}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="break-all text-xs text-sky-400 hover:underline"
+                        onClick={(event) => event.stopPropagation()}
                       >
                         {entry.siteUrl}
                       </a>
+                    ) : (
+                      "—"
                     )}
                   </td>
-                  <td className="break-all px-2 py-3 text-slate-300">
-                    {entry.username}
-                  </td>
-                  <td className="px-2 py-3">
-                    <span className="rounded-full border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-xs text-slate-300">
-                      {entry.category}
-                    </span>
-                  </td>
-                  <td className="px-2 py-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <code
-                        className={`font-mono text-xs ${
-                          isRevealed
-                            ? "break-all text-slate-200"
-                            : "tracking-widest text-slate-500"
-                        }`}
-                      >
-                        {isRevealed ? revealed[entry.id] : MASKED_PASSWORD}
-                      </code>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleReveal(entry)}
-                        disabled={isBusy}
-                        aria-label={
-                          isRevealed
-                            ? `Hide password for ${entry.siteName}`
-                            : `Reveal password for ${entry.siteName}`
-                        }
-                        className={buttonClass}
-                      >
-                        {isRevealed ? (
-                          <EyeOff className="size-3.5" aria-hidden="true" />
-                        ) : (
-                          <Eye className="size-3.5" aria-hidden="true" />
-                        )}
-                        {isRevealed ? "Hide" : "Reveal"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(entry)}
-                        disabled={isBusy}
-                        aria-label={`Copy password for ${entry.siteName}`}
-                        className={buttonClass}
-                      >
-                        {copiedId === entry.id ? (
-                          <Check className="size-3.5 text-emerald-400" aria-hidden="true" />
-                        ) : (
-                          <Copy className="size-3.5" aria-hidden="true" />
-                        )}
-                        Copy
-                      </button>
-                    </div>
-                  </td>
-                  <td className="px-2 py-3">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onEdit(entry)}
-                        aria-label={`Edit ${entry.siteName}`}
-                        className={buttonClass}
-                      >
-                        <Pencil className="size-3.5" aria-hidden="true" />
-                        Edit
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(entry)}
-                        disabled={deletingId === entry.id}
-                        aria-label={`Delete ${entry.siteName}`}
-                        className={`${buttonClass} hover:border-rose-500/60 hover:text-rose-300`}
-                      >
-                        <Trash2 className="size-3.5" aria-hidden="true" />
-                        Delete
-                      </button>
-                    </div>
-                  </td>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
+              ))}
+            </tbody>
+          </table>
 
-        {entries === null && (
-          <p className="px-2 py-6 text-center text-sm text-slate-500">
-            Loading vault…
-          </p>
-        )}
+          {entries === null && (
+            <p className="empty">Loading vault…</p>
+          )}
 
-        {entries !== null && filtered.length === 0 && (
-          <p className="px-2 py-6 text-center text-sm text-slate-500">
-            {entries.length === 0
-              ? "No credentials saved yet. Add one using the form above."
-              : "No entries match your search or category filter."}
-          </p>
-        )}
+          {entries !== null && filtered.length === 0 && (
+            <p className="empty">
+              {entries.length === 0
+                ? "No credentials saved yet. Use New entry to add one."
+                : "No entries match your search or category."}
+            </p>
+          )}
+        </div>
+
+        <aside className="detail-pane" aria-label="Credential details">
+          {selected === null ? (
+            <div className="placeholder">
+              Select an entry to view its details.
+            </div>
+          ) : (
+            <>
+              <button
+                type="button"
+                className="m-btn text detail-back"
+                onClick={() => onSelect(null)}
+              >
+                ← Back to list
+              </button>
+
+              <h3>
+                <span className="entry-icon" aria-hidden="true">
+                  <svg
+                    width="18"
+                    height="18"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm-3 8V6a3 3 0 0 1 6 0v3H9Z" />
+                  </svg>
+                </span>
+                {selected.siteName}
+              </h3>
+
+              <div className="detail-rows">
+                <div className="detail-field">
+                  <div className="lbl">Username</div>
+                  <div className="val">{selected.username}</div>
+                </div>
+
+                <div className="detail-field">
+                  <div className="lbl">Password</div>
+                  <div className="val">
+                    <span className="mono">
+                      {revealedPassword ?? MASKED_PASSWORD}
+                    </span>
+                    <button
+                      type="button"
+                      className="m-iconbtn"
+                      style={{ width: 32, height: 32 }}
+                      onClick={() => void handleToggleReveal(selected)}
+                      disabled={busyId === selected.id}
+                      aria-label={
+                        revealedPassword !== undefined
+                          ? "Hide password"
+                          : "Reveal password"
+                      }
+                    >
+                      {revealedPassword !== undefined ? (
+                        <EyeOff width={18} height={18} aria-hidden="true" />
+                      ) : (
+                        <Eye width={18} height={18} aria-hidden="true" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="m-iconbtn"
+                      style={{ width: 32, height: 32 }}
+                      onClick={() => void handleCopy(selected)}
+                      disabled={busyId === selected.id}
+                      aria-label="Copy password"
+                    >
+                      {copiedId === selected.id ? (
+                        <Check width={18} height={18} aria-hidden="true" />
+                      ) : (
+                        <Copy width={18} height={18} aria-hidden="true" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="detail-field">
+                  <div className="lbl">URL</div>
+                  <div className="val">
+                    {selected.siteUrl ? (
+                      <a
+                        href={selected.siteUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        {selected.siteUrl}
+                      </a>
+                    ) : (
+                      "—"
+                    )}
+                  </div>
+                </div>
+
+                <div className="detail-field">
+                  <div className="lbl">Category</div>
+                  <div className="val">{selected.category}</div>
+                </div>
+              </div>
+
+              <div className="divider" />
+
+              <div className="detail-meta">
+                <span>Created {formatDate(selected.createdAt)}</span>
+                <span>Last modified {formatDate(selected.updatedAt)}</span>
+              </div>
+            </>
+          )}
+        </aside>
       </div>
-    </div>
+    </>
   );
 }

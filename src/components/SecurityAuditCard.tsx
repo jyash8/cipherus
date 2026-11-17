@@ -1,26 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
 import {
-  CircleCheck,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
+import {
   Download,
   Eye,
   EyeOff,
   KeyRound,
   LoaderCircle,
-  Lock,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import { MIN_SAFE_ENTROPY_BITS } from "@/config/constants";
-
-const inputClass =
-  "w-full rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500";
-
-const primaryButtonClass =
-  "inline-flex w-full items-center justify-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900 disabled:cursor-not-allowed disabled:opacity-50";
-
-const secondaryButtonClass =
-  "inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-700 px-4 py-2 text-sm font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-50";
 
 const WRONG_PASSWORD_MESSAGE =
   "Incorrect master password, or a vault record could not be decrypted.";
@@ -66,13 +62,6 @@ interface ExportPayload {
 }
 
 type Notice = { kind: "error" | "success" | "info"; message: string } | null;
-type StatTone = "neutral" | "danger" | "warning" | "good";
-
-interface Stat {
-  label: string;
-  value: string | number;
-  tone: StatTone;
-}
 
 const ISSUE_LABELS: Record<AuditIssue, string> = {
   weak: "Weak password",
@@ -154,86 +143,6 @@ function isExportPayload(data: unknown): data is ExportPayload {
   );
 }
 
-function scoreClass(score: number): string {
-  if (score <= 1) {
-    return "border-rose-500/40 bg-rose-500/10 text-rose-300";
-  }
-  if (score === 2) {
-    return "border-amber-500/40 bg-amber-500/10 text-amber-300";
-  }
-  return "border-emerald-500/40 bg-emerald-500/10 text-emerald-300";
-}
-
-function issueClass(issue: AuditIssue): string {
-  switch (issue) {
-    case "weak":
-    case "reused":
-      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
-    case "duplicate":
-      return "border-amber-500/30 bg-amber-500/10 text-amber-300";
-    case "stale":
-      return "border-slate-600 bg-slate-800/60 text-slate-300";
-  }
-}
-
-function toneClass(tone: StatTone): string {
-  switch (tone) {
-    case "danger":
-      return "text-rose-300";
-    case "warning":
-      return "text-amber-300";
-    case "good":
-      return "text-emerald-300";
-    default:
-      return "text-slate-100";
-  }
-}
-
-function noticeClass(kind: NonNullable<Notice>["kind"]): string {
-  switch (kind) {
-    case "success":
-      return "border-emerald-500/30 bg-emerald-500/10 text-emerald-300";
-    case "info":
-      return "border-sky-500/30 bg-sky-500/10 text-sky-300";
-    default:
-      return "border-rose-500/30 bg-rose-500/10 text-rose-300";
-  }
-}
-
-function buildStats(summary: AuditSummary): Stat[] {
-  return [
-    { label: "Credentials", value: summary.total, tone: "neutral" },
-    {
-      label: "Weak",
-      value: summary.weak,
-      tone: summary.weak > 0 ? "danger" : "neutral",
-    },
-    {
-      label: "Reused",
-      value: summary.reused,
-      tone: summary.reused > 0 ? "danger" : "neutral",
-    },
-    {
-      label: "Duplicate",
-      value: summary.duplicate,
-      tone: summary.duplicate > 0 ? "warning" : "neutral",
-    },
-    {
-      label: "Stale > 90d",
-      value: summary.stale,
-      tone: summary.stale > 0 ? "warning" : "neutral",
-    },
-    {
-      label: "Avg. entropy",
-      value: `${summary.averageEntropyBits} bits`,
-      tone:
-        summary.averageEntropyBits >= MIN_SAFE_ENTROPY_BITS
-          ? "good"
-          : "warning",
-    },
-  ];
-}
-
 function exportFilename(disposition: string | null): string {
   const match = disposition?.match(/filename="([^"]+)"/);
   const candidate = match?.[1]?.replace(/[^A-Za-z0-9._-]/g, "") ?? "";
@@ -259,45 +168,59 @@ function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-export default function SecurityAuditCard() {
-  const [masterPassword, setMasterPassword] = useState("");
+function noticeClass(kind: NonNullable<Notice>["kind"]): string {
+  switch (kind) {
+    case "success":
+      return "notice success";
+    case "info":
+      return "notice info";
+    default:
+      return "notice error";
+  }
+}
+
+function statColor(tone: "neutral" | "danger" | "warning" | "good"): string {
+  switch (tone) {
+    case "danger":
+      return "var(--error)";
+    case "warning":
+      return "var(--warning)";
+    case "good":
+      return "var(--success)";
+    default:
+      return "var(--on-surface)";
+  }
+}
+
+export interface SecurityAuditCardProps {
+  active: boolean;
+  masterPassword: string;
+  onMasterPasswordChange: (value: string) => void;
+  onNotify: (message: string) => void;
+}
+
+export default function SecurityAuditCard({
+  active,
+  masterPassword,
+  onMasterPasswordChange,
+  onNotify,
+}: SecurityAuditCardProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [pending, setPending] = useState<AuditAction | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [audit, setAudit] = useState<AuditResult | null>(null);
-  const passwordInputRef = useRef<HTMLInputElement>(null);
+  const autoRan = useRef(false);
 
-  useEffect(() => {
-    return () => {
-      // The passphrase lives only in this component's React state and is never
-      // written to storage. Drop the reference when the card unmounts.
-      setMasterPassword("");
-    };
-  }, []);
-
-  function handlePasswordChange(value: string): void {
-    setMasterPassword(value);
-    setPasswordError(null);
-  }
-
-  function requirePassword(): string | null {
-    if (masterPassword.trim() === "") {
+  const runAudit = useCallback(async (password: string) => {
+    if (password.trim() === "") {
       setPasswordError(
-        "Enter your master password before running an audit or exporting metadata.",
+        "Enter your master password before running an audit.",
       );
-      passwordInputRef.current?.focus();
-      return null;
-    }
-    return masterPassword;
-  }
-
-  async function runAudit(): Promise<void> {
-    const password = requirePassword();
-    if (password === null) {
       return;
     }
 
+    setPasswordError(null);
     setPending("audit");
     setNotice(null);
 
@@ -339,12 +262,7 @@ export default function SecurityAuditCard() {
       }
 
       setAudit(data);
-      setNotice({
-        kind: "success",
-        message: `Audited ${data.summary.total} ${
-          data.summary.total === 1 ? "credential" : "credentials"
-        }.`,
-      });
+      setNotice(null);
     } catch {
       setAudit(null);
       setNotice({
@@ -354,14 +272,30 @@ export default function SecurityAuditCard() {
     } finally {
       setPending(null);
     }
-  }
+  }, []);
 
-  async function runExport(): Promise<void> {
-    const password = requirePassword();
-    if (password === null) {
+  useEffect(() => {
+    if (!active || autoRan.current) return;
+    if (masterPassword.trim() === "") return;
+
+    autoRan.current = true;
+    // Auto-run intentionally updates the panel as soon as the shared session
+    // password is available. This effect runs once per mount, so the render
+    // cascade it causes is bounded.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void runAudit(masterPassword);
+  }, [active, masterPassword, runAudit]);
+
+  async function runExport() {
+    const password = masterPassword.trim();
+    if (password === "") {
+      setPasswordError(
+        "Enter your master password before exporting metadata.",
+      );
       return;
     }
 
+    setPasswordError(null);
     setPending("export");
     setNotice(null);
 
@@ -419,13 +353,17 @@ export default function SecurityAuditCard() {
         return;
       }
 
-      downloadBlob(blob, exportFilename(response.headers.get("Content-Disposition")));
+      downloadBlob(
+        blob,
+        exportFilename(response.headers.get("Content-Disposition")),
+      );
       setNotice({
         kind: "success",
         message: `Exported ${data.credentials.length} metadata ${
           data.credentials.length === 1 ? "record" : "records"
         }.`,
       });
+      onNotify(`Exported ${data.credentials.length} metadata records.`);
     } catch {
       setNotice({
         kind: "error",
@@ -436,267 +374,264 @@ export default function SecurityAuditCard() {
     }
   }
 
-  function handleAuditSubmit(event: FormEvent<HTMLFormElement>): void {
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void runAudit();
+    void runAudit(masterPassword);
   }
 
-  const stats = audit ? buildStats(audit.summary) : [];
-  const categoryEntries = audit ? Object.entries(audit.categories) : [];
+  const stats =
+    audit === null
+      ? []
+      : [
+          {
+            label: "Credentials",
+            value: audit.summary.total,
+            tone: "neutral" as const,
+          },
+          {
+            label: "Weak",
+            value: audit.summary.weak,
+            tone: audit.summary.weak > 0 ? ("danger" as const) : ("neutral" as const),
+          },
+          {
+            label: "Reused",
+            value: audit.summary.reused,
+            tone:
+              audit.summary.reused > 0 ? ("danger" as const) : ("neutral" as const),
+          },
+          {
+            label: "Duplicate",
+            value: audit.summary.duplicate,
+            tone:
+              audit.summary.duplicate > 0
+                ? ("warning" as const)
+                : ("neutral" as const),
+          },
+          {
+            label: "Stale",
+            value: audit.summary.stale,
+            tone:
+              audit.summary.stale > 0
+                ? ("warning" as const)
+                : ("neutral" as const),
+          },
+          {
+            label: "Avg entropy (bits)",
+            value: audit.summary.averageEntropyBits,
+            tone:
+              audit.summary.averageEntropyBits >= MIN_SAFE_ENTROPY_BITS
+                ? ("good" as const)
+                : ("warning" as const),
+          },
+        ];
 
   return (
-    <section
-      aria-labelledby="security-audit-heading"
-      className="w-full min-w-0 max-w-full space-y-5 rounded-xl border border-slate-800 bg-slate-900/50 p-4 md:p-5"
-    >
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2
-          id="security-audit-heading"
-          className="flex items-center gap-2 font-semibold text-slate-200"
-        >
-          <ShieldCheck className="size-4 text-sky-400" aria-hidden="true" />
-          Security Audit
-        </h2>
-        <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
-          Vault-wide
-        </span>
-      </div>
-
-      <form noValidate onSubmit={handleAuditSubmit} className="space-y-4">
-        <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-          <div className="flex items-center gap-2">
-            <KeyRound className="size-4 text-sky-400" aria-hidden="true" />
-            <label
-              htmlFor="audit-master-password"
-              className="text-xs font-semibold uppercase tracking-wide text-slate-400"
-            >
-              Master Password
-            </label>
-          </div>
-
-          <div className="relative mt-2">
-            <Lock
-              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-slate-500"
-              aria-hidden="true"
-            />
-            <input
-              id="audit-master-password"
-              ref={passwordInputRef}
-              type={showPassword ? "text" : "password"}
-              value={masterPassword}
-              onChange={(event) => handlePasswordChange(event.target.value)}
-              placeholder="Enter your vault passphrase"
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={passwordError !== null}
-              aria-describedby={
-                passwordError === null
-                  ? "audit-master-password-help"
-                  : "audit-master-password-help audit-master-password-error"
-              }
-              className={`${inputClass} pl-9 pr-10`}
-            />
-            <button
-              type="button"
-              onClick={() => setShowPassword((visible) => !visible)}
-              aria-label={
-                showPassword ? "Hide master password" : "Show master password"
-              }
-              aria-pressed={showPassword}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition hover:text-slate-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
-            >
-              {showPassword ? (
-                <EyeOff className="size-4" aria-hidden="true" />
-              ) : (
-                <Eye className="size-4" aria-hidden="true" />
-              )}
-            </button>
-          </div>
-
-          <p
-            id="audit-master-password-help"
-            className="mt-2 text-xs text-slate-500"
-          >
-            Held in memory for this tab only — never stored in the browser.
+    <div className="panel audit-panel">
+      <div className="audit-head">
+        <div className="audit-head-text">
+          <h2>
+            <span className="tile-icon" aria-hidden="true">
+              <ShieldCheck width={22} height={22} />
+            </span>
+            Security Audit
+          </h2>
+          <p>
+            Analyzes the local vault for weak, reused, duplicate, and stale
+            credentials.
           </p>
-          {passwordError !== null && (
-            <p
-              id="audit-master-password-error"
-              className="mt-1 text-xs text-rose-400"
-            >
-              {passwordError}
-            </p>
-          )}
         </div>
 
-        <div className="grid grid-cols-1 gap-2">
-          <button
-            type="submit"
-            disabled={pending !== null}
-            aria-busy={pending === "audit"}
-            className={primaryButtonClass}
-          >
-            {pending === "audit" ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
-            ) : (
-              <ShieldCheck className="size-4" aria-hidden="true" />
-            )}
-            {pending === "audit" ? "Auditing…" : "Run security audit"}
-          </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button
             type="button"
+            className="m-btn tonal"
+            onClick={() => void runAudit(masterPassword)}
+            disabled={pending !== null}
+            aria-busy={pending === "audit"}
+          >
+            {pending === "audit" ? (
+              <LoaderCircle
+                width={18}
+                height={18}
+                className="spinner"
+                aria-hidden="true"
+              />
+            ) : (
+              <RefreshCw width={18} height={18} aria-hidden="true" />
+            )}
+            {pending === "audit" ? "Auditing…" : "Re-run audit"}
+          </button>
+
+          <button
+            type="button"
+            className="m-btn tonal"
             onClick={() => void runExport()}
             disabled={pending !== null}
             aria-busy={pending === "export"}
-            className={secondaryButtonClass}
           >
             {pending === "export" ? (
-              <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />
+              <LoaderCircle
+                width={18}
+                height={18}
+                className="spinner"
+                aria-hidden="true"
+              />
             ) : (
-              <Download className="size-4" aria-hidden="true" />
+              <Download width={18} height={18} aria-hidden="true" />
             )}
             {pending === "export" ? "Exporting…" : "Export metadata"}
           </button>
         </div>
+      </div>
+
+      <form
+        noValidate
+        onSubmit={handleSubmit}
+        className="session-bar"
+        style={{ flex: "0 0 auto" }}
+      >
+        <label htmlFor="audit-master-password" className="session-label">
+          <KeyRound width={14} height={14} aria-hidden="true" />
+          Master password
+        </label>
+        <div className="session-input">
+          <input
+            id="audit-master-password"
+            type={showPassword ? "text" : "password"}
+            value={masterPassword}
+            onChange={(event) => {
+              onMasterPasswordChange(event.target.value);
+              setPasswordError(null);
+            }}
+            placeholder="Enter your vault passphrase"
+            autoComplete="off"
+            spellCheck={false}
+            aria-invalid={passwordError !== null}
+            aria-describedby={
+              passwordError === null
+                ? "audit-master-password-help"
+                : "audit-master-password-help audit-master-password-error"
+            }
+          />
+          <button
+            type="button"
+            className="m-iconbtn reveal"
+            onClick={() => setShowPassword((visible) => !visible)}
+            aria-label={
+              showPassword ? "Hide master password" : "Show master password"
+            }
+            aria-pressed={showPassword}
+          >
+            {showPassword ? (
+              <EyeOff width={16} height={16} aria-hidden="true" />
+            ) : (
+              <Eye width={16} height={16} aria-hidden="true" />
+            )}
+          </button>
+        </div>
+        <span className="session-hint" id="audit-master-password-help">
+          Held in memory for this tab only
+        </span>
+        {passwordError !== null && (
+          <p id="audit-master-password-error" className="field-error">
+            {passwordError}
+          </p>
+        )}
       </form>
 
       {notice !== null && (
         <p
           role={notice.kind === "error" ? "alert" : "status"}
           aria-live={notice.kind === "error" ? undefined : "polite"}
-          className={`break-words rounded-lg border px-3 py-2 text-xs ${noticeClass(
-            notice.kind,
-          )}`}
+          className={noticeClass(notice.kind)}
         >
           {notice.message}
         </p>
       )}
 
-      {audit !== null && (
-        <div aria-labelledby="audit-results-heading" className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3
-              id="audit-results-heading"
-              className="text-sm font-semibold text-slate-200"
-            >
-              Audit results
-            </h3>
-            <span className="text-xs text-slate-500">
-              {audit.summary.total}{" "}
-              {audit.summary.total === 1 ? "entry" : "entries"}
-            </span>
+      <div className="audit-results">
+        {audit === null ? (
+          <div className="audit-empty">
+            {pending === "audit"
+              ? "Auditing the vault…"
+              : masterPassword.trim() === ""
+                ? "Enter your master password to run the audit."
+                : "Re-run the audit to see findings."}
           </div>
-
-          <ul className="grid grid-cols-2 gap-2">
-            {stats.map((stat) => (
-              <li
-                key={stat.label}
-                className="rounded-lg border border-slate-800 bg-slate-950/40 px-3 py-2"
-              >
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
-                  {stat.label}
-                </p>
-                <p
-                  className={`mt-0.5 text-lg font-semibold ${toneClass(
-                    stat.tone,
-                  )}`}
-                >
-                  {stat.value}
-                </p>
-              </li>
-            ))}
-          </ul>
-          <p className="text-[11px] text-slate-500">
-            Issue counts are per credential entry.
-          </p>
-
-          {categoryEntries.length > 0 && (
-            <div>
-              <h3 className="text-xs font-medium text-slate-400">Categories</h3>
-              <ul className="mt-2 flex flex-wrap gap-2">
-                {categoryEntries.map(([category, count]) => (
-                  <li
-                    key={category}
-                    className="rounded-full border border-slate-700 bg-slate-950/60 px-2 py-0.5 text-xs text-slate-300"
+        ) : (
+          <>
+            <div className="summary-grid">
+              {stats.map((stat) => (
+                <div key={stat.label} className="summary-item">
+                  <div
+                    className="n"
+                    style={{ color: statColor(stat.tone) }}
                   >
-                    <span className="break-words">{category}</span>
-                    <span className="ml-1 font-mono text-slate-400">
-                      {count}
-                    </span>
-                  </li>
-                ))}
-              </ul>
+                    {stat.value}
+                  </div>
+                  <div className="l">{stat.label}</div>
+                </div>
+              ))}
             </div>
-          )}
 
-          <div>
-            <h3 className="text-xs font-medium text-slate-400">Findings</h3>
-            {audit.findings.length === 0 ? (
-              <p className="mt-2 text-xs text-slate-500">
-                No stored credentials to report.
-              </p>
-            ) : (
-              <ul className="mt-2 space-y-2">
-                {audit.findings.map((finding) => (
-                  <li
-                    key={finding.id}
-                    className="rounded-lg border border-slate-800 bg-slate-950/40 p-3"
-                  >
-                    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
-                      <span className="min-w-0 break-words font-medium text-slate-200">
-                        {finding.siteName}
-                      </span>
-                      <span
-                        className={`shrink-0 rounded-full border px-2 py-0.5 text-xs ${scoreClass(
-                          finding.score,
-                        )}`}
-                      >
-                        {finding.label} · {finding.score}/4
-                      </span>
-                    </div>
-                    <p className="mt-1 break-all text-xs text-slate-400">
-                      {finding.username} · {finding.category}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {finding.entropyBits} bits estimated entropy
-                    </p>
-
-                    {finding.issues.length > 0 ? (
-                      <ul className="mt-2 flex flex-wrap gap-1.5">
-                        {finding.issues.map((issue) => (
-                          <li key={issue}>
-                            <span
-                              className={`rounded-full border px-2 py-0.5 text-[11px] ${issueClass(
-                                issue,
-                              )}`}
-                            >
-                              {ISSUE_LABELS[issue]}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-emerald-300">
-                        <CircleCheck
-                          className="size-3.5"
-                          aria-hidden="true"
-                        />
-                        No issues found
-                      </p>
-                    )}
-                  </li>
-                ))}
-              </ul>
+            {Object.keys(audit.categories).length > 0 && (
+              <div>
+                <h3 className="section-label">Categories</h3>
+                <div className="badges">
+                  {Object.entries(audit.categories).map(([category, count]) => (
+                    <span key={category} className="badge">
+                      {category} · {count}
+                    </span>
+                  ))}
+                </div>
+              </div>
             )}
-          </div>
-        </div>
-      )}
 
-      <p className="text-xs text-slate-500">
-        The export contains vault metadata only — never passwords, salts, IVs, or
-        ciphertext. Both actions send the master password in the request body,
-        never in the URL.
-      </p>
-    </section>
+            <div>
+              <h3 className="section-label">Findings</h3>
+              {audit.findings.length === 0 ? (
+                <p className="muted">No stored credentials to report.</p>
+              ) : (
+                <div className="findings">
+                  {audit.findings.map((finding) => (
+                    <div key={finding.id} className="finding">
+                      <div className="head">
+                        <span className="title">{finding.siteName}</span>
+                        <span className="muted">
+                          {finding.label} · {finding.entropyBits} bits
+                        </span>
+                      </div>
+                      <div className="muted">
+                        {finding.username} · {finding.category}
+                      </div>
+                      <div className="badges">
+                        {finding.issues.length > 0 ? (
+                          finding.issues.map((issue) => (
+                            <span
+                              key={issue}
+                              className={`badge ${issue}`}
+                              title={ISSUE_LABELS[issue]}
+                            >
+                              {issue.toUpperCase()}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="badge ok">OK</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <p className="muted">
+              Issue counts are per credential entry. The export contains vault
+              metadata only — never passwords, salts, IVs, or ciphertext.
+            </p>
+          </>
+        )}
+      </div>
+    </div>
   );
 }

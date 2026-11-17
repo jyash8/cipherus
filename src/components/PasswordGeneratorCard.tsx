@@ -7,11 +7,11 @@ import {
   Eye,
   EyeOff,
   KeyRound,
+  Lock,
   RefreshCw,
-  ShieldCheck,
-  ShieldX,
 } from "lucide-react";
 import {
+  CATEGORIES,
   DEFAULT_PASSWORD_LENGTH,
   MIN_SAFE_ENTROPY_BITS,
 } from "@/config/constants";
@@ -19,9 +19,6 @@ import { evaluateStrength, generatePassword } from "@/lib/passwordUtils";
 
 const MIN_LENGTH = 8;
 const MAX_LENGTH = 64;
-
-const inputClass =
-  "w-full rounded-lg border border-slate-800 bg-slate-950/60 px-3 py-2 font-mono text-sm text-slate-100 placeholder:text-slate-600 focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500";
 
 async function copyText(text: string): Promise<void> {
   if (navigator.clipboard && window.isSecureContext) {
@@ -44,13 +41,25 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
-function meterStyles(score: number): { bar: string; text: string } {
-  if (score <= 1) return { bar: "bg-rose-500", text: "text-rose-400" };
-  if (score === 2) return { bar: "bg-amber-400", text: "text-amber-300" };
-  return { bar: "bg-emerald-400", text: "text-emerald-300" };
+function meterClass(score: number): string {
+  if (score <= 1) return "weak";
+  if (score === 2) return "fair";
+  return "good";
 }
 
-export default function PasswordGeneratorCard() {
+export interface PasswordGeneratorCardProps {
+  masterPassword: string;
+  onMasterPasswordChange: (value: string) => void;
+  onSaved: (message: string) => void;
+  onNotify: (message: string) => void;
+}
+
+export default function PasswordGeneratorCard({
+  masterPassword,
+  onMasterPasswordChange,
+  onSaved,
+  onNotify,
+}: PasswordGeneratorCardProps) {
   const [password, setPassword] = useState("");
   const [length, setLength] = useState(DEFAULT_PASSWORD_LENGTH);
   const [uppercase, setUppercase] = useState(true);
@@ -59,6 +68,14 @@ export default function PasswordGeneratorCard() {
   const [visible, setVisible] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [siteName, setSiteName] = useState("");
+  const [siteUrl, setSiteUrl] = useState("");
+  const [username, setUsername] = useState("");
+  const [category, setCategory] = useState<string>("General");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [showMaster, setShowMaster] = useState(false);
 
   // Generate only after hydration so server and client markup stay identical.
   useEffect(() => {
@@ -85,13 +102,11 @@ export default function PasswordGeneratorCard() {
 
   const strength = useMemo(() => evaluateStrength(password), [password]);
   const meetsTarget = strength.entropyBits >= MIN_SAFE_ENTROPY_BITS;
-  const styles = meterStyles(strength.score);
+  const tone = meterClass(strength.score);
 
   function handleGenerate() {
     try {
-      setPassword(
-        generatePassword({ length, uppercase, numbers, symbols }),
-      );
+      setPassword(generatePassword({ length, uppercase, numbers, symbols }));
       setCopied(false);
       setError(null);
     } catch (cause) {
@@ -110,9 +125,80 @@ export default function PasswordGeneratorCard() {
       await copyText(password);
       setCopied(true);
       setError(null);
+      onNotify("Generated password copied to clipboard.");
     } catch {
       setCopied(false);
       setError("Could not copy to the clipboard in this browser.");
+    }
+  }
+
+  async function handleSave() {
+    if (saving) return;
+
+    const trimmedName = siteName.trim();
+    const trimmedUsername = username.trim();
+
+    if (!password) {
+      setSaveError("Generate a password before saving it.");
+      return;
+    }
+    if (!trimmedName) {
+      setSaveError("Site name is required.");
+      return;
+    }
+    if (!trimmedUsername) {
+      setSaveError("Username or email is required.");
+      return;
+    }
+    if (masterPassword.trim() === "") {
+      setSaveError("Enter your master password to encrypt this entry.");
+      return;
+    }
+
+    setSaving(true);
+    setSaveError(null);
+
+    try {
+      const response = await fetch("/api/vault", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          siteName: trimmedName,
+          siteUrl: siteUrl.trim() === "" ? null : siteUrl.trim(),
+          username: trimmedUsername,
+          category,
+          password,
+          masterPassword,
+        }),
+      });
+
+      if (!response.ok) {
+        const data: unknown = await response.json().catch(() => null);
+        const serverMessage =
+          typeof data === "object" &&
+          data !== null &&
+          "error" in data &&
+          typeof (data as { error?: unknown }).error === "string"
+            ? (data as { error: string }).error
+            : null;
+
+        setSaveError(
+          response.status === 401
+            ? "Invalid master password or corrupted vault entry."
+            : (serverMessage ?? "Could not save the credential. Please try again."),
+        );
+        return;
+      }
+
+      setSiteName("");
+      setSiteUrl("");
+      setUsername("");
+      setCategory("General");
+      onSaved(`"${trimmedName}" saved to the vault.`);
+    } catch {
+      setSaveError("Network error — could not reach the vault API.");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -138,201 +224,264 @@ export default function PasswordGeneratorCard() {
   ] as const;
 
   return (
-    <div className="w-full min-w-0 max-w-full space-y-5 rounded-xl border border-slate-800 bg-slate-900/50 p-4 md:p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="flex items-center gap-2 font-semibold text-slate-200">
-          <KeyRound className="size-4 text-sky-400" aria-hidden="true" />
-          Password Generator
-        </h2>
-        <span className="rounded-full border border-slate-700 px-2 py-0.5 text-xs text-slate-400">
-          Web Crypto
+    <div className="panel generator-panel">
+      <h2>
+        <span className="tile-icon" aria-hidden="true">
+          <KeyRound width={22} height={22} />
         </span>
-      </div>
+        Password Generator
+      </h2>
 
-      {/* Read-only password display */}
-      <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-        <label htmlFor="generated-password" className="sr-only">
-          Generated password
-        </label>
-        <div className="flex w-full min-w-0 flex-col gap-2">
-          <input
-            id="generated-password"
-            type={visible ? "text" : "password"}
-            value={password}
-            readOnly
-            placeholder="Generating…"
-            autoComplete="off"
-            spellCheck={false}
-            aria-describedby="password-strength-summary password-entropy-summary"
-            onFocus={(event) => event.currentTarget.select()}
-            className={`${inputClass} min-w-0 max-w-full`}
-          />
-          <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setVisible((current) => !current)}
-              aria-label={visible ? "Hide generated password" : "Show generated password"}
-              aria-pressed={visible}
-              className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-700 p-2 text-slate-400 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
-            >
-              {visible ? (
-                <EyeOff className="size-4" aria-hidden="true" />
-              ) : (
-                <Eye className="size-4" aria-hidden="true" />
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleCopy}
-              disabled={!password}
-              aria-label="Copy generated password"
-              className="inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg border border-slate-700 px-3 py-2 text-xs font-medium text-slate-300 transition hover:border-slate-500 hover:text-slate-100 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-500 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {copied ? (
-                <Check className="size-4 text-emerald-400" aria-hidden="true" />
-              ) : (
-                <Copy className="size-4" aria-hidden="true" />
-              )}
-              {copied ? "Copied" : "Copy"}
-            </button>
-          </div>
-        </div>
-        <p role="status" aria-live="polite" className="sr-only">
-          {copied ? "Generated password copied to clipboard." : ""}
-        </p>
-      </div>
-
-      {/* Strength meter */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between gap-2 text-xs">
-          <span className="font-medium text-slate-400">Strength</span>
-          <span id="password-strength-summary" className={`font-medium ${styles.text}`}>
-            {strength.score}/4 · {strength.label}
-          </span>
-        </div>
-        <div
-          role="meter"
-          aria-label="Password strength"
-          aria-valuemin={0}
-          aria-valuemax={4}
-          aria-valuenow={strength.score}
-          aria-valuetext={`${strength.label}, ${strength.score} out of 4`}
-          className="flex gap-1.5"
-        >
-          {[0, 1, 2, 3].map((index) => (
-            <span
-              key={index}
-              className={`h-1.5 flex-1 rounded-full ${
-                index < strength.score ? styles.bar : "bg-slate-800"
-              }`}
-            />
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <span className="text-slate-500">
-            {strength.entropyBits} bits estimated entropy
-          </span>
-          <span
-            id="password-entropy-summary"
-            className={`inline-flex items-center gap-1.5 ${
-              meetsTarget ? "text-emerald-300" : "text-amber-300"
-            }`}
-          >
-            {meetsTarget ? (
-              <ShieldCheck className="size-4" aria-hidden="true" />
-            ) : (
-              <ShieldX className="size-4" aria-hidden="true" />
-            )}
-            {meetsTarget
-              ? `Meets ${MIN_SAFE_ENTROPY_BITS}-bit target`
-              : `Below ${MIN_SAFE_ENTROPY_BITS}-bit target`}
-          </span>
-        </div>
-      </div>
-
-      {/* Length */}
-      <div>
-        <div className="flex items-center justify-between gap-3">
-          <label
-            htmlFor="password-length"
-            className="text-xs font-medium text-slate-400"
-          >
-            Length
-          </label>
-          <output
-            htmlFor="password-length"
-            className="rounded-md border border-slate-700 px-2 py-0.5 font-mono text-xs text-slate-200"
-          >
-            {length}
-          </output>
-        </div>
-        <input
-          id="password-length"
-          type="range"
-          min={MIN_LENGTH}
-          max={MAX_LENGTH}
-          step={1}
-          value={length}
-          onChange={(event) => setLength(Number(event.target.value))}
-          className="mt-2 w-full min-w-0 max-w-full rounded-full accent-sky-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
-        />
-        <div className="mt-1 flex justify-between text-[11px] text-slate-500">
-          <span>{MIN_LENGTH}</span>
-          <span>{MAX_LENGTH}</span>
-        </div>
-      </div>
-
-      {/* Character sets */}
-      <fieldset className="rounded-lg border border-slate-800 bg-slate-950/40 p-3">
-        <legend className="px-1 text-xs font-medium text-slate-400">
-          Character sets
-        </legend>
-        <div className="grid grid-cols-1 gap-2">
-          {toggles.map((toggle) => (
-            <label
-              key={toggle.id}
-              htmlFor={toggle.id}
-              className="flex min-w-0 cursor-pointer items-center gap-2 text-sm text-slate-300"
-            >
+      <div className="gen-grid">
+        <div className="gen-controls">
+          <div className="m-textfield">
+            <label htmlFor="generated-password">Generated password</label>
+            <div className="generator-output">
               <input
-                id={toggle.id}
-                type="checkbox"
-                checked={toggle.checked}
-                onChange={(event) => toggle.onChange(event.target.checked)}
-                className="size-4 rounded border-slate-700 bg-slate-950 accent-sky-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-500"
+                id="generated-password"
+                type={visible ? "text" : "password"}
+                value={password}
+                readOnly
+                placeholder="Generating…"
+                autoComplete="off"
+                spellCheck={false}
+                aria-describedby="password-strength-summary password-entropy-summary"
+                onFocus={(event) => event.currentTarget.select()}
               />
-              {toggle.label}
-            </label>
-          ))}
+              <button
+                type="button"
+                className="m-btn tonal"
+                onClick={() => setVisible((current) => !current)}
+                aria-label={
+                  visible ? "Hide generated password" : "Show generated password"
+                }
+                aria-pressed={visible}
+              >
+                {visible ? (
+                  <EyeOff width={18} height={18} aria-hidden="true" />
+                ) : (
+                  <Eye width={18} height={18} aria-hidden="true" />
+                )}
+                {visible ? "Hide" : "Show"}
+              </button>
+              <button
+                type="button"
+                className="m-btn contained"
+                onClick={() => void handleCopy()}
+                disabled={!password}
+                aria-label="Copy generated password"
+              >
+                {copied ? (
+                  <Check width={18} height={18} aria-hidden="true" />
+                ) : (
+                  <Copy width={18} height={18} aria-hidden="true" />
+                )}
+                {copied ? "Copied" : "Copy"}
+              </button>
+              <button
+                type="button"
+                className="m-btn tonal"
+                onClick={handleGenerate}
+              >
+                <RefreshCw width={18} height={18} aria-hidden="true" />
+                Generate
+              </button>
+            </div>
+          </div>
+
+          <div className="meter">
+            <div className="meter-hint">
+              <span>Strength</span>
+              <span id="password-strength-summary">
+                {strength.label} · {strength.score}/4
+              </span>
+            </div>
+            <div
+              className="meter-track"
+              role="meter"
+              aria-label="Password strength"
+              aria-valuemin={0}
+              aria-valuemax={4}
+              aria-valuenow={strength.score}
+              aria-valuetext={`${strength.label}, ${strength.score} out of 4`}
+            >
+              {[0, 1, 2, 3].map((index) => (
+                <span
+                  key={index}
+                  className={`meter-bar${index < strength.score ? ` filled ${tone}` : ""}`}
+                />
+              ))}
+            </div>
+            <div className="meter-hint">
+              <span id="password-entropy-summary">
+                {strength.entropyBits} bits estimated entropy
+              </span>
+              <span
+                style={{
+                  color: meetsTarget ? "var(--success)" : "var(--warning)",
+                }}
+              >
+                {meetsTarget
+                  ? `Meets ${MIN_SAFE_ENTROPY_BITS}-bit target`
+                  : `Below ${MIN_SAFE_ENTROPY_BITS}-bit target`}
+              </span>
+            </div>
+          </div>
+
+          <div className="range-row">
+            <label htmlFor="password-length">Length</label>
+            <input
+              id="password-length"
+              type="range"
+              min={MIN_LENGTH}
+              max={MAX_LENGTH}
+              step={1}
+              value={length}
+              onChange={(event) => setLength(Number(event.target.value))}
+            />
+            <output htmlFor="password-length" className="output-chip">
+              {length}
+            </output>
+          </div>
+
+          <div className="checks">
+            {toggles.map((toggle) => (
+              <label
+                key={toggle.id}
+                className="check"
+                htmlFor={toggle.id}
+              >
+                <input
+                  id={toggle.id}
+                  type="checkbox"
+                  checked={toggle.checked}
+                  onChange={(event) => toggle.onChange(event.target.checked)}
+                />
+                {toggle.label}
+              </label>
+            ))}
+          </div>
+
+          <p className="muted">
+            Lowercase letters are always included. Entropy is a character-class
+            estimate — a useful heuristic, not a guarantee of real-world
+            security.
+          </p>
+
+          {error && (
+            <p role="alert" className="notice error">
+              {error}
+            </p>
+          )}
         </div>
-        <p className="mt-2 text-xs text-slate-500">
-          Lowercase letters are always included. Options apply when you generate
-          a new password.
-        </p>
-      </fieldset>
 
-      {error && (
-        <p
-          role="alert"
-          className="break-words rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300"
-        >
-          {error}
-        </p>
-      )}
+        <div className="save-form">
+          <h3>Save to vault</h3>
+          <p className="muted">
+            Saves the generated password with the metadata below.
+          </p>
 
-      <button
-        type="button"
-        onClick={handleGenerate}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-900"
-      >
-        <RefreshCw className="size-4" aria-hidden="true" />
-        Generate password
-      </button>
+          <div className="save-grid">
+            <div className="m-textfield full">
+              <label htmlFor="gen-site-name">Title</label>
+              <input
+                id="gen-site-name"
+                value={siteName}
+                onChange={(event) => setSiteName(event.target.value)}
+                placeholder="GitHub"
+                autoComplete="off"
+              />
+            </div>
 
-      <p className="text-xs text-slate-500">
-        Entropy is a character-class estimate — a useful heuristic, not a
-        guarantee of real-world security.
-      </p>
+            <div className="m-textfield full">
+              <label htmlFor="gen-username">User name</label>
+              <input
+                id="gen-username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                placeholder="you@example.com"
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="m-textfield full">
+              <label htmlFor="gen-site-url">URL</label>
+              <input
+                id="gen-site-url"
+                value={siteUrl}
+                onChange={(event) => setSiteUrl(event.target.value)}
+                placeholder="https://github.com"
+                inputMode="url"
+                autoComplete="off"
+              />
+            </div>
+
+            <div className="m-textfield full">
+              <label htmlFor="gen-category">Category</label>
+              <select
+                id="gen-category"
+                value={category}
+                onChange={(event) => setCategory(event.target.value)}
+              >
+                {CATEGORIES.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="m-textfield full">
+              <label htmlFor="gen-master-password">Master password</label>
+              <div className="with-icon">
+                <input
+                  id="gen-master-password"
+                  type={showMaster ? "text" : "password"}
+                  value={masterPassword}
+                  onChange={(event) =>
+                    onMasterPasswordChange(event.target.value)
+                  }
+                  placeholder="Enter your vault passphrase"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  className="m-iconbtn reveal"
+                  onClick={() => setShowMaster((visibleValue) => !visibleValue)}
+                  aria-label={
+                    showMaster ? "Hide master password" : "Show master password"
+                  }
+                  aria-pressed={showMaster}
+                >
+                  {showMaster ? (
+                    <EyeOff width={16} height={16} aria-hidden="true" />
+                  ) : (
+                    <Eye width={16} height={16} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {saveError && (
+            <p role="alert" className="notice error">
+              {saveError}
+            </p>
+          )}
+
+          <button
+            type="button"
+            className="m-btn contained"
+            onClick={() => void handleSave()}
+            disabled={saving}
+            style={{ alignSelf: "flex-start" }}
+          >
+            <Lock width={18} height={18} aria-hidden="true" />
+            {saving ? "Saving…" : "Save to vault"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
