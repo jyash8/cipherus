@@ -5,21 +5,14 @@ import {
   useEffect,
   useRef,
   useState,
-  type FormEvent,
 } from "react";
 import {
   Download,
-  Eye,
-  EyeOff,
-  KeyRound,
   LoaderCircle,
   RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import { MIN_SAFE_ENTROPY_BITS } from "@/config/constants";
-
-const WRONG_PASSWORD_MESSAGE =
-  "Incorrect master password, or a vault record could not be decrypted.";
 
 const AUDIT_FALLBACK_ERROR =
   "Could not run the security audit. Please try again.";
@@ -75,8 +68,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function extractServerError(data: unknown): string | null {
-  if (isRecord(data) && typeof data.error === "string") {
-    return data.error;
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as { error?: unknown }).error === "string"
+  ) {
+    return (data as { error: string }).error;
   }
   return null;
 }
@@ -194,33 +192,19 @@ function statColor(tone: "neutral" | "danger" | "warning" | "good"): string {
 
 export interface SecurityAuditCardProps {
   active: boolean;
-  masterPassword: string;
-  onMasterPasswordChange: (value: string) => void;
   onNotify: (message: string) => void;
 }
 
 export default function SecurityAuditCard({
   active,
-  masterPassword,
-  onMasterPasswordChange,
   onNotify,
 }: SecurityAuditCardProps) {
-  const [showPassword, setShowPassword] = useState(false);
-  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [pending, setPending] = useState<AuditAction | null>(null);
   const [notice, setNotice] = useState<Notice>(null);
   const [audit, setAudit] = useState<AuditResult | null>(null);
   const autoRan = useRef(false);
 
-  const runAudit = useCallback(async (password: string) => {
-    if (password.trim() === "") {
-      setPasswordError(
-        "Enter your master password before running an audit.",
-      );
-      return;
-    }
-
-    setPasswordError(null);
+  const runAudit = useCallback(async () => {
     setPending("audit");
     setNotice(null);
 
@@ -229,7 +213,7 @@ export default function SecurityAuditCard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ action: "audit", masterPassword: password }),
+        body: JSON.stringify({ action: "audit" }),
       });
       const data: unknown = await response.json().catch(() => null);
 
@@ -237,10 +221,7 @@ export default function SecurityAuditCard({
         setAudit(null);
         setNotice({
           kind: "error",
-          message:
-            response.status === 401
-              ? WRONG_PASSWORD_MESSAGE
-              : (extractServerError(data) ?? AUDIT_FALLBACK_ERROR),
+          message: extractServerError(data) ?? AUDIT_FALLBACK_ERROR,
         });
         return;
       }
@@ -276,26 +257,14 @@ export default function SecurityAuditCard({
 
   useEffect(() => {
     if (!active || autoRan.current) return;
-    if (masterPassword.trim() === "") return;
 
     autoRan.current = true;
-    // Auto-run intentionally updates the panel as soon as the shared session
-    // password is available. This effect runs once per mount, so the render
-    // cascade it causes is bounded.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void runAudit(masterPassword);
-  }, [active, masterPassword, runAudit]);
+    // Auto-run intentionally updates the panel when the audit tab opens. This
+    // effect runs once per mount, so the render cascade it causes is bounded.
+    void runAudit();
+  }, [active, runAudit]);
 
   async function runExport() {
-    const password = masterPassword.trim();
-    if (password === "") {
-      setPasswordError(
-        "Enter your master password before exporting metadata.",
-      );
-      return;
-    }
-
-    setPasswordError(null);
     setPending("export");
     setNotice(null);
 
@@ -304,17 +273,14 @@ export default function SecurityAuditCard({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
-        body: JSON.stringify({ action: "export", masterPassword: password }),
+        body: JSON.stringify({ action: "export" }),
       });
 
       if (!response.ok) {
         const data: unknown = await response.json().catch(() => null);
         setNotice({
           kind: "error",
-          message:
-            response.status === 401
-              ? WRONG_PASSWORD_MESSAGE
-              : (extractServerError(data) ?? EXPORT_FALLBACK_ERROR),
+          message: extractServerError(data) ?? EXPORT_FALLBACK_ERROR,
         });
         return;
       }
@@ -332,7 +298,6 @@ export default function SecurityAuditCard({
 
       const message = readMessage(data);
       if (message !== null) {
-        // Empty vault: the password cannot be verified, so nothing is exported.
         setNotice({ kind: "info", message });
         return;
       }
@@ -372,11 +337,6 @@ export default function SecurityAuditCard({
     } finally {
       setPending(null);
     }
-  }
-
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    void runAudit(masterPassword);
   }
 
   const stats =
@@ -445,7 +405,7 @@ export default function SecurityAuditCard({
           <button
             type="button"
             className="m-btn tonal"
-            onClick={() => void runAudit(masterPassword)}
+            onClick={() => void runAudit()}
             disabled={pending !== null}
             aria-busy={pending === "audit"}
           >
@@ -484,61 +444,6 @@ export default function SecurityAuditCard({
         </div>
       </div>
 
-      <form
-        noValidate
-        onSubmit={handleSubmit}
-        className="session-bar"
-        style={{ flex: "0 0 auto" }}
-      >
-        <label htmlFor="audit-master-password" className="session-label">
-          <KeyRound width={14} height={14} aria-hidden="true" />
-          Master password
-        </label>
-        <div className="session-input">
-          <input
-            id="audit-master-password"
-            type={showPassword ? "text" : "password"}
-            value={masterPassword}
-            onChange={(event) => {
-              onMasterPasswordChange(event.target.value);
-              setPasswordError(null);
-            }}
-            placeholder="Enter your vault passphrase"
-            autoComplete="off"
-            spellCheck={false}
-            aria-invalid={passwordError !== null}
-            aria-describedby={
-              passwordError === null
-                ? "audit-master-password-help"
-                : "audit-master-password-help audit-master-password-error"
-            }
-          />
-          <button
-            type="button"
-            className="m-iconbtn reveal"
-            onClick={() => setShowPassword((visible) => !visible)}
-            aria-label={
-              showPassword ? "Hide master password" : "Show master password"
-            }
-            aria-pressed={showPassword}
-          >
-            {showPassword ? (
-              <EyeOff width={16} height={16} aria-hidden="true" />
-            ) : (
-              <Eye width={16} height={16} aria-hidden="true" />
-            )}
-          </button>
-        </div>
-        <span className="session-hint" id="audit-master-password-help">
-          Held in memory for this tab only
-        </span>
-        {passwordError !== null && (
-          <p id="audit-master-password-error" className="field-error">
-            {passwordError}
-          </p>
-        )}
-      </form>
-
       {notice !== null && (
         <p
           role={notice.kind === "error" ? "alert" : "status"}
@@ -554,9 +459,7 @@ export default function SecurityAuditCard({
           <div className="audit-empty">
             {pending === "audit"
               ? "Auditing the vault…"
-              : masterPassword.trim() === ""
-                ? "Enter your master password to run the audit."
-                : "Re-run the audit to see findings."}
+              : "Run the audit to see findings."}
           </div>
         ) : (
           <>

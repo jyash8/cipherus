@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   Copy,
@@ -10,12 +10,9 @@ import {
   Lock,
   RefreshCw,
 } from "lucide-react";
-import {
-  CATEGORIES,
-  DEFAULT_PASSWORD_LENGTH,
-  MIN_SAFE_ENTROPY_BITS,
-} from "@/config/constants";
-import { evaluateStrength, generatePassword } from "@/lib/passwordUtils";
+import { CATEGORIES, DEFAULT_PASSWORD_LENGTH } from "@/config/constants";
+import { generatePassword } from "@/lib/passwordUtils";
+import StrengthMeter from "./StrengthMeter";
 
 const MIN_LENGTH = 8;
 const MAX_LENGTH = 64;
@@ -26,7 +23,6 @@ async function copyText(text: string): Promise<void> {
     return;
   }
 
-  // Fallback for non-secure contexts (e.g. plain http on a LAN address).
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.style.position = "fixed";
@@ -35,28 +31,17 @@ async function copyText(text: string): Promise<void> {
   textarea.select();
   const copied = document.execCommand("copy");
   document.body.removeChild(textarea);
-
   if (!copied) {
     throw new Error("Clipboard copy failed");
   }
 }
 
-function meterClass(score: number): string {
-  if (score <= 1) return "weak";
-  if (score === 2) return "fair";
-  return "good";
-}
-
 export interface PasswordGeneratorCardProps {
-  masterPassword: string;
-  onMasterPasswordChange: (value: string) => void;
   onSaved: (message: string) => void;
   onNotify: (message: string) => void;
 }
 
 export default function PasswordGeneratorCard({
-  masterPassword,
-  onMasterPasswordChange,
   onSaved,
   onNotify,
 }: PasswordGeneratorCardProps) {
@@ -75,7 +60,6 @@ export default function PasswordGeneratorCard({
   const [category, setCategory] = useState<string>("General");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [showMaster, setShowMaster] = useState(false);
 
   // Generate only after hydration so server and client markup stay identical.
   useEffect(() => {
@@ -99,10 +83,6 @@ export default function PasswordGeneratorCard({
     const timeout = window.setTimeout(() => setCopied(false), 2000);
     return () => window.clearTimeout(timeout);
   }, [copied]);
-
-  const strength = useMemo(() => evaluateStrength(password), [password]);
-  const meetsTarget = strength.entropyBits >= MIN_SAFE_ENTROPY_BITS;
-  const tone = meterClass(strength.score);
 
   function handleGenerate() {
     try {
@@ -150,10 +130,6 @@ export default function PasswordGeneratorCard({
       setSaveError("Username or email is required.");
       return;
     }
-    if (masterPassword.trim() === "") {
-      setSaveError("Enter your master password to encrypt this entry.");
-      return;
-    }
 
     setSaving(true);
     setSaveError(null);
@@ -168,7 +144,6 @@ export default function PasswordGeneratorCard({
           username: trimmedUsername,
           category,
           password,
-          masterPassword,
         }),
       });
 
@@ -183,9 +158,7 @@ export default function PasswordGeneratorCard({
             : null;
 
         setSaveError(
-          response.status === 401
-            ? "Invalid master password or corrupted vault entry."
-            : (serverMessage ?? "Could not save the credential. Please try again."),
+          serverMessage ?? "Could not save the credential. Please try again.",
         );
         return;
       }
@@ -289,44 +262,11 @@ export default function PasswordGeneratorCard({
             </div>
           </div>
 
-          <div className="meter">
-            <div className="meter-hint">
-              <span>Strength</span>
-              <span id="password-strength-summary">
-                {strength.label} · {strength.score}/4
-              </span>
-            </div>
-            <div
-              className="meter-track"
-              role="meter"
-              aria-label="Password strength"
-              aria-valuemin={0}
-              aria-valuemax={4}
-              aria-valuenow={strength.score}
-              aria-valuetext={`${strength.label}, ${strength.score} out of 4`}
-            >
-              {[0, 1, 2, 3].map((index) => (
-                <span
-                  key={index}
-                  className={`meter-bar${index < strength.score ? ` filled ${tone}` : ""}`}
-                />
-              ))}
-            </div>
-            <div className="meter-hint">
-              <span id="password-entropy-summary">
-                {strength.entropyBits} bits estimated entropy
-              </span>
-              <span
-                style={{
-                  color: meetsTarget ? "var(--success)" : "var(--warning)",
-                }}
-              >
-                {meetsTarget
-                  ? `Meets ${MIN_SAFE_ENTROPY_BITS}-bit target`
-                  : `Below ${MIN_SAFE_ENTROPY_BITS}-bit target`}
-              </span>
-            </div>
-          </div>
+          <StrengthMeter
+            password={password}
+            summaryId="password-strength-summary"
+            entropyId="password-entropy-summary"
+          />
 
           <div className="range-row">
             <label htmlFor="password-length">Length</label>
@@ -429,38 +369,6 @@ export default function PasswordGeneratorCard({
                   </option>
                 ))}
               </select>
-            </div>
-
-            <div className="m-textfield full">
-              <label htmlFor="gen-master-password">Master password</label>
-              <div className="with-icon">
-                <input
-                  id="gen-master-password"
-                  type={showMaster ? "text" : "password"}
-                  value={masterPassword}
-                  onChange={(event) =>
-                    onMasterPasswordChange(event.target.value)
-                  }
-                  placeholder="Enter your vault passphrase"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-                <button
-                  type="button"
-                  className="m-iconbtn reveal"
-                  onClick={() => setShowMaster((visibleValue) => !visibleValue)}
-                  aria-label={
-                    showMaster ? "Hide master password" : "Show master password"
-                  }
-                  aria-pressed={showMaster}
-                >
-                  {showMaster ? (
-                    <EyeOff width={16} height={16} aria-hidden="true" />
-                  ) : (
-                    <Eye width={16} height={16} aria-hidden="true" />
-                  )}
-                </button>
-              </div>
             </div>
           </div>
 

@@ -49,3 +49,10 @@ next-env.d.ts
 /data/
 .env
 .env*.local
+
+# Server vault key (never commit)
+.cipherus/
+*.key
+
+# Local agent/design notes
+docs/superpowers/

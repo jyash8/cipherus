@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { Eye, EyeOff, KeyRound, Lock } from "lucide-react";
+import { Eye, EyeOff, Lock } from "lucide-react";
 import { CATEGORIES } from "@/config/constants";
 
 export interface EditableCredential {
@@ -13,8 +13,6 @@ export interface EditableCredential {
 }
 
 export interface CredentialFormProps {
-  masterPassword: string;
-  onMasterPasswordChange: (value: string) => void;
   editingCredential: EditableCredential | null;
   onCancelEdit: () => void;
   onSaved: () => void;
@@ -24,7 +22,6 @@ interface FieldErrors {
   siteName?: string;
   username?: string;
   password?: string;
-  masterPassword?: string;
 }
 
 function extractServerError(data: unknown): string | null {
@@ -50,8 +47,6 @@ export default function CredentialForm(props: CredentialFormProps) {
 }
 
 function CredentialFormFields({
-  masterPassword,
-  onMasterPasswordChange,
   editingCredential,
   onCancelEdit,
   onSaved,
@@ -70,9 +65,6 @@ function CredentialFormFields({
   const [serverError, setServerError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  // Session-only visibility toggles. The master password itself lives in the
-  // parent's React state and is never written to localStorage or cookies.
-  const [showMasterPassword, setShowMasterPassword] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -93,10 +85,6 @@ function CredentialFormFields({
     if (!isEditing && !hasPasswordInput) {
       nextErrors.password = "Password is required for a new entry.";
     }
-    if ((!isEditing || hasPasswordInput) && masterPassword.trim() === "") {
-      nextErrors.masterPassword =
-        "Enter your master password to encrypt this entry.";
-    }
 
     setErrors(nextErrors);
     setServerError(null);
@@ -112,10 +100,6 @@ function CredentialFormFields({
     };
     if (hasPasswordInput) {
       payload.password = password;
-    }
-    // Only needed when a secret is being encrypted; the API ignores it otherwise.
-    if (masterPassword.trim() !== "") {
-      payload.masterPassword = masterPassword;
     }
 
     const endpoint =
@@ -136,9 +120,7 @@ function CredentialFormFields({
         const data: unknown = await response.json().catch(() => null);
         setServerError(
           extractServerError(data) ??
-            (response.status === 401
-              ? "Invalid master password or corrupted vault entry."
-              : "Could not save the credential. Please try again."),
+            "Could not save the credential. Please try again.",
         );
         return;
       }
@@ -267,59 +249,6 @@ function CredentialFormFields({
           {errors.password && (
             <p id="credential-password-error" className="field-error">
               {errors.password}
-            </p>
-          )}
-        </div>
-
-        <div className="m-textfield full">
-          <label htmlFor="form-master-password">
-            <span
-              style={{ display: "inline-flex", alignItems: "center", gap: 6 }}
-            >
-              <KeyRound width={14} height={14} aria-hidden="true" />
-              Master password
-            </span>
-          </label>
-          <div className="with-icon">
-            <input
-              id="form-master-password"
-              type={showMasterPassword ? "text" : "password"}
-              value={masterPassword}
-              onChange={(event) =>
-                onMasterPasswordChange(event.target.value)
-              }
-              placeholder="Enter your vault passphrase"
-              autoComplete="off"
-              spellCheck={false}
-              aria-invalid={Boolean(errors.masterPassword)}
-              aria-describedby={
-                errors.masterPassword ? "form-master-password-error" : undefined
-              }
-            />
-            <button
-              type="button"
-              className="m-iconbtn reveal"
-              onClick={() => setShowMasterPassword((visible) => !visible)}
-              aria-label={
-                showMasterPassword
-                  ? "Hide master password"
-                  : "Show master password"
-              }
-              aria-pressed={showMasterPassword}
-            >
-              {showMasterPassword ? (
-                <EyeOff width={16} height={16} aria-hidden="true" />
-              ) : (
-                <Eye width={16} height={16} aria-hidden="true" />
-              )}
-            </button>
-          </div>
-          <p className="muted">
-            Held in memory for this tab only — never stored in the browser.
-          </p>
-          {errors.masterPassword && (
-            <p id="form-master-password-error" className="field-error">
-              {errors.masterPassword}
             </p>
           )}
         </div>

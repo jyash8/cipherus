@@ -2,10 +2,10 @@ import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { credentials } from "@/db/schema";
 import { decryptSecret, encryptSecret } from "@/lib/crypto";
+import { accessVaultKey } from "@/lib/vaultKey";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-/** Metadata columns exposed by the vault API. Secret columns are never selected. */
 const credentialMetadata = {
   id: credentials.id,
   siteName: credentials.siteName,
@@ -41,49 +41,39 @@ function parseId(raw: string): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-/** Reveal the decrypted password for a single vault entry. */
-export async function POST(request: Request, { params }: RouteContext) {
+export async function POST(_request: Request, { params }: RouteContext) {
   const { id: rawId } = await params;
   const id = parseId(rawId);
   if (id === null) {
     return Response.json({ error: "Invalid credential id" }, { status: 400 });
   }
 
-  const body = await readJsonBody(request);
-  if (!body) {
-    return Response.json(
-      { error: "Request body must be a valid JSON object" },
-      { status: 400 },
-    );
-  }
+  const vaultKey = accessVaultKey();
+  if (!vaultKey.ok) return vaultKey.response;
 
-  const { masterPassword } = body;
-  if (!isNonEmptyString(masterPassword)) {
-    return Response.json({ error: "masterPassword is required" }, { status: 400 });
-  }
-
+  let row: typeof credentials.$inferSelect | undefined;
   try {
-    const [row] = await db
+    [row] = await db
       .select()
       .from(credentials)
       .where(eq(credentials.id, id))
       .limit(1);
-
-    if (!row) {
-      return Response.json({ error: "Credential not found" }, { status: 404 });
-    }
-
-    try {
-      const password = decryptSecret(row, masterPassword);
-      return Response.json({ password });
-    } catch {
-      return Response.json(
-        { error: "Invalid master password or corrupted vault entry" },
-        { status: 401 },
-      );
-    }
   } catch {
     return Response.json({ error: "Failed to reveal vault entry" }, { status: 500 });
+  }
+
+  if (!row) {
+    return Response.json({ error: "Credential not found" }, { status: 404 });
+  }
+
+  try {
+    const password = decryptSecret(row, vaultKey.key);
+    return Response.json({ password });
+  } catch {
+    return Response.json(
+      { error: "Failed to decrypt vault entry" },
+      { status: 500 },
+    );
   }
 }
 
@@ -102,7 +92,10 @@ export async function PUT(request: Request, { params }: RouteContext) {
     );
   }
 
-  const { siteName, siteUrl, username, category, password, masterPassword } = body;
+  const vaultKey = accessVaultKey();
+  if (!vaultKey.ok) return vaultKey.response;
+
+  const { siteName, siteUrl, username, category, password } = body;
   const updates: CredentialUpdate = {};
 
   if (siteName !== undefined) {
@@ -138,48 +131,13 @@ export async function PUT(request: Request, { params }: RouteContext) {
     if (!isNonEmptyString(password)) {
       return Response.json({ error: "password must be a non-empty string" }, { status: 400 });
     }
-    if (!isNonEmptyString(masterPassword)) {
-      return Response.json(
-        { error: "masterPassword is required to set a new password" },
-        { status: 400 },
-      );
-    }
-
-    // Verify the existing master password before allowing a password change.
-    // Without this, anyone who can reach the API could overwrite a credential's
-    // ciphertext using an arbitrary master password.
-    try {
-      const [row] = await db
-        .select()
-        .from(credentials)
-        .where(eq(credentials.id, id))
-        .limit(1);
-
-      if (!row) {
-        return Response.json({ error: "Credential not found" }, { status: 404 });
-      }
-
-      try {
-        decryptSecret(row, masterPassword);
-      } catch {
-        return Response.json(
-          { error: "Invalid master password or corrupted vault entry" },
-          { status: 401 },
-        );
-      }
-    } catch {
-      return Response.json({ error: "Failed to update vault entry" }, { status: 500 });
-    }
-
-    // Re-encrypt with a fresh salt/IV.
-    Object.assign(updates, encryptSecret(password, masterPassword));
+    Object.assign(updates, encryptSecret(password, vaultKey.key));
   }
 
   if (Object.keys(updates).length === 0) {
     return Response.json({ error: "No updatable fields provided" }, { status: 400 });
   }
 
-  // Any successful update bumps the timestamp, whether or not the secret changed.
   updates.updatedAt = new Date();
 
   try {
@@ -199,48 +157,17 @@ export async function PUT(request: Request, { params }: RouteContext) {
   }
 }
 
-export async function DELETE(request: Request, { params }: RouteContext) {
+export async function DELETE(_request: Request, { params }: RouteContext) {
   const { id: rawId } = await params;
   const id = parseId(rawId);
   if (id === null) {
     return Response.json({ error: "Invalid credential id" }, { status: 400 });
   }
 
-  const body = await readJsonBody(request);
-  if (!body) {
-    return Response.json(
-      { error: "Request body must be a valid JSON object" },
-      { status: 400 },
-    );
-  }
-
-  const { masterPassword } = body;
-  if (!isNonEmptyString(masterPassword)) {
-    return Response.json({ error: "masterPassword is required" }, { status: 400 });
-  }
+  const vaultKey = accessVaultKey();
+  if (!vaultKey.ok) return vaultKey.response;
 
   try {
-    const [row] = await db
-      .select()
-      .from(credentials)
-      .where(eq(credentials.id, id))
-      .limit(1);
-
-    if (!row) {
-      return Response.json({ error: "Credential not found" }, { status: 404 });
-    }
-
-    // Verify the master password before allowing deletion, so someone who can
-    // reach the API cannot destroy vault data without knowing the passphrase.
-    try {
-      decryptSecret(row, masterPassword);
-    } catch {
-      return Response.json(
-        { error: "Invalid master password or corrupted vault entry" },
-        { status: 401 },
-      );
-    }
-
     const result = await db.delete(credentials).where(eq(credentials.id, id));
 
     if (result.changes === 0) {

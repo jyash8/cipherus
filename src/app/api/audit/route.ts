@@ -3,21 +3,13 @@ import { MIN_SAFE_ENTROPY_BITS } from "@/config/constants";
 import { db } from "@/db";
 import { credentials, type Credential } from "@/db/schema";
 import { decryptSecret } from "@/lib/crypto";
+import { accessVaultKey } from "@/lib/vaultKey";
 import { evaluateStrength } from "@/lib/passwordUtils";
 
 const STALE_AFTER_DAYS = 90;
 const STALE_AFTER_MS = STALE_AFTER_DAYS * 24 * 60 * 60 * 1000;
 
-/**
- * Both actions require the master password. The audit needs it to score each
- * stored password, and the metadata export decrypts every record first so plain
- * metadata cannot be pulled without proving knowledge of the password.
- *
- * A wrong password and a corrupted record intentionally share one response so
- * the endpoint cannot be used as an oracle.
- */
-const INVALID_MASTER_PASSWORD_ERROR =
-  "Invalid master password or corrupted vault records";
+const DECRYPT_ERROR = "Failed to decrypt vault records";
 
 type AuditAction = "audit" | "export";
 
@@ -32,19 +24,6 @@ interface AuditFinding {
   label: string;
   entropyBits: number;
   issues: AuditIssue[];
-}
-
-function jsonResponse(
-  body: unknown,
-  status = 200,
-  headers: Record<string, string> = {},
-): Response {
-  return Response.json(body, {
-    status,
-    // The audit result depends on a secret supplied per request, so no response
-    // may be stored by a browser, proxy, or CDN.
-    headers: { "Cache-Control": "no-store", ...headers },
-  });
 }
 
 async function readJsonBody(
@@ -72,16 +51,26 @@ function normalizedDuplicateKey(siteName: string, username: string): string {
   ]);
 }
 
-function decryptRow(row: Credential, masterPassword: string): string {
+function decryptRow(row: Credential, key: Buffer): string {
   return decryptSecret(
     {
-      salt: row.salt,
       iv: row.iv,
       ciphertext: row.ciphertext,
       authTag: row.authTag,
     },
-    masterPassword,
+    key,
   );
+}
+
+function jsonResponse(
+  body: unknown,
+  status = 200,
+  headers: Record<string, string> = {},
+): Response {
+  return Response.json(body, {
+    status,
+    headers: { "Cache-Control": "no-store", ...headers },
+  });
 }
 
 function emptyAuditResponse(): Response {
@@ -96,34 +85,19 @@ function emptyAuditResponse(): Response {
     },
     categories: {},
     findings: [],
-    message:
-      "The vault is empty, so the master password cannot be verified. Add a credential first, then run the audit again.",
   });
 }
 
 function emptyExportResponse(): Response {
-  return jsonResponse({
-    count: 0,
-    credentials: [],
-    message:
-      "The vault is empty, so the master password cannot be verified. Add a credential first, then export again.",
-  });
+  return jsonResponse({ count: 0, credentials: [] });
 }
 
-/**
- * Verifies the master password against every record before returning any
- * metadata. Decrypted values are discarded immediately and never placed in the
- * response; only the non-secret metadata columns are mapped out.
- */
-function exportVaultMetadata(
-  rows: Credential[],
-  masterPassword: string,
-): Response {
+function exportVaultMetadata(rows: Credential[], key: Buffer): Response {
   for (const row of rows) {
     try {
-      decryptRow(row, masterPassword);
+      decryptRow(row, key);
     } catch {
-      return jsonResponse({ error: INVALID_MASTER_PASSWORD_ERROR }, 401);
+      return jsonResponse({ error: DECRYPT_ERROR }, 500);
     }
   }
 
@@ -148,24 +122,18 @@ function exportVaultMetadata(
   );
 }
 
-/**
- * Decrypts each entry once, keeps the plaintext only for this request, and
- * reduces it to a sanitized finding. Every map is cleared in `finally`.
- */
-function runAudit(rows: Credential[], masterPassword: string): Response {
+function runAudit(rows: Credential[], key: Buffer): Response {
   const plaintextByEntry = new Map<number, string>();
   const idsByPassword = new Map<string, number[]>();
   const duplicateGroups = new Map<string, number[]>();
   const categoryCounts = new Map<string, number>();
 
   try {
-    // Any decryption failure is reported as the same safe 401: the response
-    // must not reveal whether the password was wrong or a record was corrupt.
     for (const row of rows) {
       try {
-        plaintextByEntry.set(row.id, decryptRow(row, masterPassword));
+        plaintextByEntry.set(row.id, decryptRow(row, key));
       } catch {
-        return jsonResponse({ error: INVALID_MASTER_PASSWORD_ERROR }, 401);
+        return jsonResponse({ error: DECRYPT_ERROR }, 500);
       }
     }
 
@@ -179,12 +147,12 @@ function runAudit(rows: Credential[], masterPassword: string): Response {
     }
 
     for (const row of rows) {
-      const key = normalizedDuplicateKey(row.siteName, row.username);
-      const group = duplicateGroups.get(key);
+      const duplicateKey = normalizedDuplicateKey(row.siteName, row.username);
+      const group = duplicateGroups.get(duplicateKey);
       if (group) {
         group.push(row.id);
       } else {
-        duplicateGroups.set(key, [row.id]);
+        duplicateGroups.set(duplicateKey, [row.id]);
       }
       categoryCounts.set(
         row.category,
@@ -203,9 +171,7 @@ function runAudit(rows: Credential[], masterPassword: string): Response {
     for (const row of rows) {
       const plaintext = plaintextByEntry.get(row.id);
       if (plaintext === undefined) {
-        // Unreachable: every row was decrypted above. Fail closed rather than
-        // exposing a partial audit.
-        return jsonResponse({ error: INVALID_MASTER_PASSWORD_ERROR }, 401);
+        return jsonResponse({ error: DECRYPT_ERROR }, 500);
       }
 
       const strength = evaluateStrength(plaintext);
@@ -265,8 +231,6 @@ function runAudit(rows: Credential[], masterPassword: string): Response {
       findings,
     });
   } finally {
-    // Plaintext exists only for the lifetime of this request. JavaScript strings
-    // cannot be wiped in place, but all references are dropped here.
     plaintextByEntry.clear();
     idsByPassword.clear();
     duplicateGroups.clear();
@@ -274,32 +238,11 @@ function runAudit(rows: Credential[], masterPassword: string): Response {
   }
 }
 
-/**
- * Single POST endpoint. The action defaults to "audit"; pass
- * `{ "action": "export", "masterPassword": "..." }` for verified metadata.
- *
- * Export is POST-only on purpose: requiring the password in a JSON body keeps it
- * out of URLs, logs, and browser history, and a GET cannot trigger a download
- * without proving knowledge of the password.
- */
 export async function POST(request: Request): Promise<Response> {
   const body = await readJsonBody(request);
   if (!body) {
     return jsonResponse(
       { error: "Request body must be a valid JSON object" },
-      400,
-    );
-  }
-
-  // Only trim for validation; the original value is passed to decryptSecret so
-  // passwords containing meaningful leading/trailing spaces still work.
-  const masterPassword = body.masterPassword;
-  if (
-    typeof masterPassword !== "string" ||
-    masterPassword.trim().length === 0
-  ) {
-    return jsonResponse(
-      { error: "masterPassword must be a non-empty string" },
       400,
     );
   }
@@ -312,23 +255,22 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
+  const vaultKey = accessVaultKey();
+  if (!vaultKey.ok) return vaultKey.response;
+
   try {
     const rows = await db
       .select()
       .from(credentials)
       .orderBy(asc(credentials.id));
 
-    // No records means no ciphertext to verify the password against, so both
-    // actions fail open to an explanatory message instead of a misleading 401.
     if (rows.length === 0) {
-      return action === "export"
-        ? emptyExportResponse()
-        : emptyAuditResponse();
+      return action === "export" ? emptyExportResponse() : emptyAuditResponse();
     }
 
     return action === "export"
-      ? exportVaultMetadata(rows, masterPassword)
-      : runAudit(rows, masterPassword);
+      ? exportVaultMetadata(rows, vaultKey.key)
+      : runAudit(rows, vaultKey.key);
   } catch {
     return jsonResponse(
       {

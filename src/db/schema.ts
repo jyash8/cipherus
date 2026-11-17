@@ -6,7 +6,6 @@ export const credentials = sqliteTable("credentials", {
   siteUrl: text("site_url"),
   username: text("username").notNull(),
   category: text("category").notNull().default("General"),
-  salt: text("salt").notNull(),
   iv: text("iv").notNull(),
   ciphertext: text("ciphertext").notNull(),
   authTag: text("auth_tag").notNull(),

@@ -23,6 +23,7 @@ import HomeView from "./HomeView";
 import Modal from "./Modal";
 import PasswordGeneratorCard from "./PasswordGeneratorCard";
 import SecurityAuditCard from "./SecurityAuditCard";
+import SetupView from "./SetupView";
 import VaultWorkspace from "./VaultWorkspace";
 
 const NAV_ITEMS: ReadonlyArray<{ id: ViewId; label: string }> = [
@@ -39,11 +40,60 @@ const VIEW_LABELS: Record<ViewId, string> = {
   audit: "Audit",
 };
 
+function extractServerError(data: unknown): string | null {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as { error?: unknown }).error === "string"
+  ) {
+    return (data as { error: string }).error;
+  }
+  return null;
+}
+
+type ShellStatus =
+  | { phase: "loading" }
+  | { phase: "ready" }
+  | { phase: "setup"; credentialCount: number }
+  | { phase: "error"; message: string };
+
+function isStatusPayload(
+  value: unknown,
+): value is { initialized: boolean; credentialCount: number } {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as {
+    initialized?: unknown;
+    credentialCount?: unknown;
+  };
+  return (
+    typeof candidate.initialized === "boolean" &&
+    typeof candidate.credentialCount === "number"
+  );
+}
+
+function BrandMark({ large = false }: { large?: boolean }) {
+  return (
+    <span className={`logo${large ? " large" : ""}`} aria-hidden="true">
+      <svg
+        width={large ? 26 : 22}
+        height={large ? 26 : 22}
+        viewBox="0 0 24 24"
+        fill="currentColor"
+      >
+        <path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm-3 8V6a3 3 0 0 1 6 0v3H9Zm3 5a1.5 1.5 0 0 1 1 2.8V18h-2v-1.2A1.5 1.5 0 0 1 12 14Z" />
+      </svg>
+    </span>
+  );
+}
+
 export default function AppShell() {
   const [view, setView] = useState<ViewId>("home");
   const [theme, setTheme] = useState<ThemeSettings>(() => readStoredTheme());
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [masterPassword, setMasterPassword] = useState("");
+  const [status, setStatus] = useState<ShellStatus>({ phase: "loading" });
   const [search, setSearch] = useState("");
   const [vaultRefreshToken, setVaultRefreshToken] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -99,6 +149,56 @@ export default function AppShell() {
     }, 4000);
   }, []);
 
+  const fetchStatus = useCallback(async (): Promise<ShellStatus> => {
+    try {
+      const response = await fetch("/api/vault/status", { cache: "no-store" });
+      const data: unknown = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        return {
+          phase: "error",
+          message:
+            extractServerError(data) ??
+            "Could not check whether the vault is set up.",
+        };
+      }
+
+      if (!isStatusPayload(data)) {
+        return {
+          phase: "error",
+          message: "The vault status API returned an unexpected response.",
+        };
+      }
+
+      return data.initialized
+        ? { phase: "ready" }
+        : { phase: "setup", credentialCount: data.credentialCount };
+    } catch {
+      return {
+        phase: "error",
+        message: "Network error — could not reach the vault API.",
+      };
+    }
+  }, []);
+
+  const loadStatus = useCallback(async () => {
+    setStatus({ phase: "loading" });
+    setStatus(await fetchStatus());
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const next = await fetchStatus();
+      if (!cancelled) setStatus(next);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchStatus]);
+
   const navigate = useCallback((next: ViewId) => {
     setView(next);
     setDrawerOpen(false);
@@ -115,6 +215,12 @@ export default function AppShell() {
     setVaultRefreshToken((token) => token + 1);
   }, []);
 
+  const handleInitialized = useCallback(() => {
+    setStatus({ phase: "ready" });
+    setVaultRefreshToken((token) => token + 1);
+    notify("Vault key created. Your vault is ready.");
+  }, [notify]);
+
   const handleGeneratorSaved = useCallback(
     (message: string) => {
       handleVaultChanged();
@@ -126,6 +232,52 @@ export default function AppShell() {
   const resetTheme = useCallback(() => {
     updateTheme(DEFAULT_THEME);
   }, [updateTheme]);
+
+  if (status.phase === "setup") {
+    return (
+      <SetupView
+        credentialCount={status.credentialCount}
+        onInitialized={handleInitialized}
+      />
+    );
+  }
+
+  if (status.phase !== "ready") {
+    return (
+      <div className="setup-screen">
+        <div className="setup-card panel vault-gate">
+          <div className="setup-brand">
+            <BrandMark large />
+            <span>{APP_NAME}</span>
+          </div>
+
+          {status.phase === "loading" && (
+            <div className="gate-body" role="status" aria-live="polite">
+              <span className="spinner" aria-hidden="true" />
+              <p className="muted">Checking the vault…</p>
+            </div>
+          )}
+
+          {status.phase === "error" && (
+            <div className="gate-body">
+              <h1>Vault unavailable</h1>
+              <p className="muted">{status.message}</p>
+              <button
+                type="button"
+                className="m-btn contained"
+                onClick={() => {
+                  setStatus({ phase: "loading" });
+                  void loadStatus();
+                }}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -149,11 +301,7 @@ export default function AppShell() {
             onClick={() => navigate("home")}
             aria-label="Go to home"
           >
-            <span className="logo" aria-hidden="true">
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5Zm-3 8V6a3 3 0 0 1 6 0v3H9Zm3 5a1.5 1.5 0 0 1 1 2.8V18h-2v-1.2A1.5 1.5 0 0 1 12 14Z" />
-              </svg>
-            </span>
+            <BrandMark />
             <span className="title">{APP_NAME}</span>
           </button>
 
@@ -201,8 +349,6 @@ export default function AppShell() {
         <div className="layout">
           {view === "vault" ? (
             <VaultWorkspace
-              masterPassword={masterPassword}
-              onMasterPasswordChange={setMasterPassword}
               refreshToken={vaultRefreshToken}
               onChanged={handleVaultChanged}
               search={search}
@@ -221,20 +367,13 @@ export default function AppShell() {
 
               {view === "generator" && (
                 <PasswordGeneratorCard
-                  masterPassword={masterPassword}
-                  onMasterPasswordChange={setMasterPassword}
                   onSaved={handleGeneratorSaved}
                   onNotify={notify}
                 />
               )}
 
               {view === "audit" && (
-                <SecurityAuditCard
-                  active={view === "audit"}
-                  masterPassword={masterPassword}
-                  onMasterPasswordChange={setMasterPassword}
-                  onNotify={notify}
-                />
+                <SecurityAuditCard active={view === "audit"} onNotify={notify} />
               )}
             </main>
           )}
@@ -244,11 +383,7 @@ export default function AppShell() {
           <span>{VIEW_LABELS[view]}</span>
           <span>Local encrypted vault</span>
           <span className="spacer" />
-          <span>
-            {masterPassword.trim() === ""
-              ? "Master password not entered"
-              : "Master password in memory"}
-          </span>
+          <span>Server vault key active</span>
         </footer>
       </div>
 

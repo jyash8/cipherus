@@ -20,7 +20,6 @@ export interface VaultEntry extends EditableCredential {
 export interface VaultTableProps {
   entries: VaultEntry[] | null;
   loadError: string | null;
-  masterPassword: string;
   category: string;
   search: string;
   selectedId: number | null;
@@ -29,7 +28,6 @@ export interface VaultTableProps {
   onEdit: (entry: EditableCredential) => void;
   onChanged: () => void;
   onNotify: (message: string) => void;
-  onRequestMasterPassword: () => void;
 }
 
 const MASKED_PASSWORD = "••••••••••••";
@@ -37,18 +35,6 @@ const MASKED_PASSWORD = "••••••••••••";
 type Notice = { kind: "error" | "success"; message: string } | null;
 
 type SortKey = "siteName" | "username" | "category" | "siteUrl";
-
-function extractServerError(data: unknown): string | null {
-  if (
-    typeof data === "object" &&
-    data !== null &&
-    "error" in data &&
-    typeof (data as { error?: unknown }).error === "string"
-  ) {
-    return (data as { error: string }).error;
-  }
-  return null;
-}
 
 function readPassword(data: unknown): string | null {
   if (
@@ -62,37 +48,16 @@ function readPassword(data: unknown): string | null {
   return null;
 }
 
-async function fetchPassword(
-  id: number,
-  masterPassword: string,
-): Promise<{ ok: true; password: string } | { ok: false; message: string }> {
-  try {
-    const response = await fetch(`/api/vault/${id}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ masterPassword }),
-    });
-    const data: unknown = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        message:
-          response.status === 401
-            ? "Incorrect master password — this entry could not be decrypted."
-            : (extractServerError(data) ??
-              "Could not reveal this password. Please try again."),
-      };
-    }
-
-    const password = readPassword(data);
-    if (password === null) {
-      return { ok: false, message: "The vault returned an unexpected response." };
-    }
-    return { ok: true, password };
-  } catch {
-    return { ok: false, message: "Network error — could not reach the vault API." };
+function extractServerError(data: unknown): string | null {
+  if (
+    typeof data === "object" &&
+    data !== null &&
+    "error" in data &&
+    typeof (data as { error?: unknown }).error === "string"
+  ) {
+    return (data as { error: string }).error;
   }
+  return null;
 }
 
 async function copyText(text: string): Promise<void> {
@@ -101,7 +66,6 @@ async function copyText(text: string): Promise<void> {
     return;
   }
 
-  // Fallback for non-secure contexts (e.g. plain http on a LAN address).
   const textarea = document.createElement("textarea");
   textarea.value = text;
   textarea.style.position = "fixed";
@@ -115,6 +79,36 @@ async function copyText(text: string): Promise<void> {
   }
 }
 
+async function fetchPassword(
+  id: number,
+): Promise<{ ok: true; password: string } | { ok: false; message: string }> {
+  try {
+    const response = await fetch(`/api/vault/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        message:
+          extractServerError(data) ??
+          "Could not reveal this password. Please try again.",
+      };
+    }
+
+    const password = readPassword(data);
+    if (password === null) {
+      return { ok: false, message: "The vault returned an unexpected response." };
+    }
+    return { ok: true, password };
+  } catch {
+    return { ok: false, message: "Network error — could not reach the vault API." };
+  }
+}
+
 function formatDate(value: string): string {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleDateString();
@@ -123,7 +117,6 @@ function formatDate(value: string): string {
 export default function VaultTable({
   entries,
   loadError,
-  masterPassword,
   category,
   search,
   selectedId,
@@ -132,7 +125,6 @@ export default function VaultTable({
   onEdit,
   onChanged,
   onNotify,
-  onRequestMasterPassword,
 }: VaultTableProps) {
   const [revealed, setRevealed] = useState<Record<number, string>>({});
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -178,19 +170,6 @@ export default function VaultTable({
     }
   }
 
-  function requireMasterPassword(what: string): string | null {
-    if (masterPassword.trim() !== "") {
-      return masterPassword;
-    }
-
-    setNotice({
-      kind: "error",
-      message: `Enter your master password in the session bar above before ${what}.`,
-    });
-    onRequestMasterPassword();
-    return null;
-  }
-
   async function handleToggleReveal(entry: VaultEntry) {
     if (revealed[entry.id] !== undefined) {
       setRevealed((previous) => {
@@ -201,12 +180,9 @@ export default function VaultTable({
       return;
     }
 
-    const master = requireMasterPassword("revealing a password");
-    if (master === null) return;
-
     setBusyId(entry.id);
     setNotice(null);
-    const result = await fetchPassword(entry.id, master);
+    const result = await fetchPassword(entry.id);
     setBusyId(null);
 
     if (result.ok) {
@@ -220,12 +196,9 @@ export default function VaultTable({
     let password = revealed[entry.id];
 
     if (password === undefined) {
-      const master = requireMasterPassword("copying a password");
-      if (master === null) return;
-
       setBusyId(entry.id);
       setNotice(null);
-      const result = await fetchPassword(entry.id, master);
+      const result = await fetchPassword(entry.id);
       setBusyId(null);
 
       if (!result.ok) {
@@ -260,25 +233,18 @@ export default function VaultTable({
     );
     if (!confirmed) return;
 
-    const master = requireMasterPassword("deleting this credential");
-    if (master === null) return;
-
     setDeletingId(entry.id);
     setNotice(null);
     try {
       const response = await fetch(`/api/vault/${entry.id}`, {
         method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ masterPassword: master }),
       });
       if (!response.ok) {
         const data: unknown = await response.json().catch(() => null);
         setNotice({
           kind: "error",
           message:
-            response.status === 401
-              ? "Incorrect master password — this entry could not be deleted."
-              : (extractServerError(data) ?? "Could not delete this credential."),
+            extractServerError(data) ?? "Could not delete this credential.",
         });
         return;
       }

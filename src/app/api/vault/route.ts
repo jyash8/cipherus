@@ -1,9 +1,10 @@
 import { desc } from "drizzle-orm";
+import { connection } from "next/server";
 import { db } from "@/db";
 import { credentials } from "@/db/schema";
 import { encryptSecret } from "@/lib/crypto";
+import { accessVaultKey } from "@/lib/vaultKey";
 
-/** Metadata columns exposed by the vault API. Secret columns are never selected. */
 const credentialMetadata = {
   id: credentials.id,
   siteName: credentials.siteName,
@@ -31,13 +32,18 @@ function isNonEmptyString(value: unknown): value is string {
 }
 
 export async function GET() {
+  await connection();
+
   try {
     const entries = await db
       .select(credentialMetadata)
       .from(credentials)
       .orderBy(desc(credentials.updatedAt));
 
-    return Response.json(entries);
+    return Response.json(
+      entries,
+      { headers: { "Cache-Control": "no-store" } },
+    );
   } catch {
     return Response.json({ error: "Failed to fetch vault entries" }, { status: 500 });
   }
@@ -52,16 +58,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const { siteName, siteUrl, username, category, password, masterPassword } = body;
+  const { siteName, siteUrl, username, category, password } = body;
 
   if (
     !isNonEmptyString(siteName) ||
     !isNonEmptyString(username) ||
-    !isNonEmptyString(password) ||
-    !isNonEmptyString(masterPassword)
+    !isNonEmptyString(password)
   ) {
     return Response.json(
-      { error: "siteName, username, password, and masterPassword are required" },
+      { error: "siteName, username, and password are required" },
       { status: 400 },
     );
   }
@@ -74,8 +79,11 @@ export async function POST(request: Request) {
     return Response.json({ error: "category must be a string" }, { status: 400 });
   }
 
+  const vaultKey = accessVaultKey();
+  if (!vaultKey.ok) return vaultKey.response;
+
   try {
-    const encrypted = encryptSecret(password, masterPassword);
+    const encrypted = encryptSecret(password, vaultKey.key);
 
     const [created] = await db
       .insert(credentials)

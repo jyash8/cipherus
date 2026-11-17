@@ -1501,6 +1501,102 @@ textarea {
   margin-left: auto;
 }
 
+/* ---------- First-run setup & shell gate ---------- */
+.setup-screen {
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--surface);
+}
+
+.setup-card {
+  max-width: 560px;
+  margin: 0 auto;
+  background: var(--surface-container-low);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elevation-3);
+  gap: 18px;
+}
+
+.setup-card.vault-gate {
+  max-width: 440px;
+}
+
+.setup-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 24px;
+  font-weight: 500;
+  color: var(--on-surface);
+}
+
+.setup-brand .logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--primary-container);
+  color: var(--on-primary-container);
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+}
+
+.setup-heading h1 {
+  font-size: 26px;
+  font-weight: 500;
+  margin: 0 0 6px;
+}
+
+.setup-heading p {
+  margin: 0;
+}
+
+.setup-warning {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.setup-warning .notice {
+  margin: 0;
+}
+
+.setup-submit {
+  align-self: flex-start;
+}
+
+.setup-note {
+  font-size: 12px;
+  margin: 0;
+}
+
+.gate-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.gate-body .spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+.gate-body h1 {
+  font-size: 24px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.gate-body p {
+  margin: 0;
+}
+
 /* ---------- Focus visibility ---------- */
 .brand:focus-visible,
 .seg:focus-visible,

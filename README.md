@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cipherus
 
-## Getting Started
+A local-only password manager. Credentials are encrypted with AES-256-GCM and stored in SQLite. You set a master password once; after that the app unlocks itself from a local key file.
 
-First, run the development server:
+![Setup screen](docs/screenshots/setup.jpeg)
+![Home screen](docs/screenshots/home.jpeg)
+![Vault with entries](docs/screenshots/vault-with-entries.jpeg)
+![Vault table empty](docs/screenshots/vault.jpeg)
+![Generator screen](docs/screenshots/generator.jpeg)
+![Audit with entries](docs/screenshots/audit-with-entries.jpeg)
+![Audit empty](docs/screenshots/audit.jpeg)
+
+## Requirements
+
+- Node.js 20+
+- pnpm
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+pnpm install
+pnpm exec drizzle-kit push
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Run
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+pnpm dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Open <http://127.0.0.1:3000>.
 
-## Learn More
+On first launch, create a master password (12+ characters). The app saves a derived key to `.cipherus/vault.key` and never stores the password.
 
-To learn more about Next.js, take a look at the following resources:
+## Build
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+pnpm build
+pnpm start
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Both scripts bind to `127.0.0.1`.
 
-## Deploy on Vercel
+## Safety
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- The API has no login while the server runs. Keep it local.
+- Never commit `.cipherus/`, `*.key`, or `*.db`.
+- Back up the database and key file together. Losing the key makes existing entries unreadable.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Docs
+
+- [Using Cipherus](docs/usage.md)
+- [Contributing](CONTRIBUTING.md)

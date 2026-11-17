@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Briefcase,
   Code,
-  Eye,
-  EyeOff,
   Folder,
   Landmark,
-  Lock,
   Users,
 } from "lucide-react";
 import { CATEGORIES } from "@/config/constants";
@@ -17,8 +14,6 @@ import Modal from "./Modal";
 import VaultTable, { type VaultEntry } from "./VaultTable";
 
 export interface VaultWorkspaceProps {
-  masterPassword: string;
-  onMasterPasswordChange: (value: string) => void;
   refreshToken: number;
   onChanged: () => void;
   search: string;
@@ -40,8 +35,6 @@ function CategoryIcon({ category }: { category: string }) {
 }
 
 export default function VaultWorkspace({
-  masterPassword,
-  onMasterPasswordChange,
   refreshToken,
   onChanged,
   search,
@@ -55,8 +48,6 @@ export default function VaultWorkspace({
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<EditableCredential | null>(null);
-  const [showMaster, setShowMaster] = useState(false);
-  const masterInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,11 +114,6 @@ export default function VaultWorkspace({
     onDrawerClose();
   }
 
-  function focusMasterPassword() {
-    masterInputRef.current?.focus();
-    masterInputRef.current?.select();
-  }
-
   return (
     <>
       <aside
@@ -174,61 +160,9 @@ export default function VaultWorkspace({
       />
 
       <main className="content vault-content" id="main-content">
-        <div className="vault-top">
-          <div className="content-toolbar" style={{ paddingBottom: 0 }}>
-            <div className="session-bar">
-              <span className="session-label">
-                <Lock width={14} height={14} aria-hidden="true" />
-                Session password
-              </span>
-              <div className="session-input">
-                <input
-                  ref={masterInputRef}
-                  id="vault-master-password"
-                  type={showMaster ? "text" : "password"}
-                  value={masterPassword}
-                  onChange={(event) =>
-                    onMasterPasswordChange(event.target.value)
-                  }
-                  placeholder="Enter your master password"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label="Session master password"
-                />
-                <button
-                  type="button"
-                  className="m-iconbtn reveal"
-                  onClick={() => setShowMaster((visible) => !visible)}
-                  aria-label={
-                    showMaster ? "Hide master password" : "Show master password"
-                  }
-                  aria-pressed={showMaster}
-                >
-                  {showMaster ? (
-                    <EyeOff width={16} height={16} aria-hidden="true" />
-                  ) : (
-                    <Eye width={16} height={16} aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-              {masterPassword !== "" && (
-                <button
-                  type="button"
-                  className="m-btn text small"
-                  onClick={() => onMasterPasswordChange("")}
-                >
-                  Clear
-                </button>
-              )}
-              <span className="session-hint">Held in memory</span>
-            </div>
-          </div>
-        </div>
-
         <VaultTable
           entries={entries}
           loadError={loadError}
-          masterPassword={masterPassword}
           category={category}
           search={search}
           selectedId={selectedId}
@@ -237,7 +171,6 @@ export default function VaultWorkspace({
           onEdit={openEdit}
           onChanged={onChanged}
           onNotify={onNotify}
-          onRequestMasterPassword={focusMasterPassword}
         />
       </main>
 
@@ -248,8 +181,6 @@ export default function VaultWorkspace({
         initialFocusSelector="#site-name"
       >
         <CredentialForm
-          masterPassword={masterPassword}
-          onMasterPasswordChange={onMasterPasswordChange}
           editingCredential={editing}
           onCancelEdit={closeForm}
           onSaved={handleSaved}
